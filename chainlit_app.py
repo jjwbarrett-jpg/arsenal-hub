@@ -1,5 +1,7 @@
 import os
 import json
+import re
+import asyncio
 import base64
 import httpx
 import chainlit as cl
@@ -139,6 +141,111 @@ def load_env_file():
 
 # Load env variables at startup
 load_env_file()
+
+# ===== AUTO SCRIBE (live session note-taker) =====
+SCRIBE_ENABLED = os.getenv("SCRIBE_ENABLED", "true").lower() == "true"
+# 1.5-flash retired; pin to flash-lite-latest (cheap classify)
+SCRIBE_MODEL = os.getenv("SCRIBE_MODEL", "gemini-flash-lite-latest")
+SCRIBE_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/"
+    f"{SCRIBE_MODEL}:generateContent"
+)
+SCRIBE_MIN_CHARS = 12
+
+SCRIBE_PROMPT = """You are a note-taking filter. Analyze this chat message and decide if it contains something worth saving as a note.
+
+Notable: decisions, action items, discoveries, errors/fixes, architecture changes, user preferences, project milestones, new ideas, tool evaluations.
+
+Not notable: greetings, filler, jokes, acknowledgments ("ok", "thanks"), small talk, debugging back-and-forth.
+
+If NOT notable, respond with EXACTLY: {{"notable": false}}
+If notable, respond with: {{"notable": true, "subject": "<3-5 word subject>", "summary": "<one sentence summary>", "importance": "low|medium|high"}}
+
+Message: {message}"""
+
+
+def _scribe_api_key() -> str:
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+
+
+def _parse_scribe_json(text: str) -> dict:
+    """Extract JSON object from model text (handles optional markdown fences)."""
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+    cleaned = cleaned.strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if m:
+            return json.loads(m.group(0))
+        raise
+
+
+async def scribe_check(message: str, author: str):
+    """Fire-and-forget: classify message, post to Clipboard if notable.
+
+    Never raises — scribe failures must not block chat.
+    """
+    if not SCRIBE_ENABLED:
+        return
+    key = _scribe_api_key()
+    if not key:
+        return
+    text = (message or "").strip()
+    if len(text) < SCRIBE_MIN_CHARS:
+        return
+    # Cap payload size so classify stays cheap
+    if len(text) > 4000:
+        text = text[:4000] + "…"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"{SCRIBE_URL}?key={key}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [
+                        {"parts": [{"text": SCRIBE_PROMPT.format(message=text)}]}
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "maxOutputTokens": 256,
+                    },
+                },
+            )
+            if resp.status_code != 200:
+                return
+
+            data = resp.json()
+            parts = data["candidates"][0]["content"]["parts"]
+            raw = "".join(p.get("text", "") for p in parts)
+            result = _parse_scribe_json(raw)
+            if not result.get("notable"):
+                return
+
+            subject = (result.get("subject") or "Session note").strip()[:80]
+            summary = (result.get("summary") or text[:200]).strip()
+            importance = result.get("importance", "medium")
+            body = f"[{author}] {summary}\n\n(importance: {importance})"
+
+            # Agent bridge — create-panel accepts title/body/source in payload
+            await client.post(
+                f"{API_BASE}/api/clipboard/agent",
+                json={
+                    "action": "create-panel",
+                    "payload": {
+                        "title": subject,
+                        "body": body,
+                        "source": "scribe",
+                        "importance": importance,
+                    },
+                },
+            )
+    except Exception:
+        pass  # Scribe fails silently — never blocks chat
+
 
 # ===== MODEL CONFIG LOADING =====
 def load_models():
@@ -492,6 +599,13 @@ async def on_message(msg: cl.Message):
         cl.Action(name="write_clipboard", payload={"content": reply}, label="📋 Write to Clipboard", tooltip="Write this reply to the shared Clipboard")
     ]
     await response_msg.send()
+
+    # Auto Scribe — after turn completes; do not await (never blocks chat)
+    if SCRIBE_ENABLED and msg.content:
+        author = "user" if getattr(msg, "author", "User") in (None, "User", "user") else "agent"
+        asyncio.create_task(scribe_check(msg.content, author))
+        if reply:
+            asyncio.create_task(scribe_check(reply, "agent"))
 
 # ===== ACTION CALLBACKS =====
 @cl.action_callback("new_chat")

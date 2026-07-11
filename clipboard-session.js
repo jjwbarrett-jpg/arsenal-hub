@@ -434,10 +434,21 @@
 
       var preview = (panel.body || '').trim().slice(0, 80);
       var time = fmtTime(panel.updatedAt || panel.createdAt);
+      var src = panel.source || 'user';
+      if (src === 'scribe' || src === 'auto') {
+        row.classList.add('cs-note-row-scribe');
+      }
+      // Small attribution badge — scribe/agent vs user notes
+      var badge = '';
+      if (src === 'scribe' || src === 'auto') {
+        badge = '<span class="cs-source-badge cs-source-scribe" title="Auto Scribe">Scribe</span>';
+      } else if (src === 'agent') {
+        badge = '<span class="cs-source-badge cs-source-agent" title="Agent">Agent</span>';
+      }
 
       row.innerHTML =
         '<div class="cs-note-left">' +
-          '<div class="cs-note-row-title">' + esc(panel.title) + '</div>' +
+          '<div class="cs-note-row-title">' + esc(panel.title) + badge + '</div>' +
           '<div class="cs-note-row-time">' + esc(time) + '</div>' +
         '</div>' +
         '<div class="cs-note-right">' +

@@ -651,16 +651,22 @@ class KanbanHandler(BaseHTTPRequestHandler):
             if action in ('create-panel', 'create-subject'):
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 bid = os.urandom(4).hex()
+                # source: user | agent | scribe | auto (default agent for this bridge)
+                src = payload.get('source') or body.get('source') or 'agent'
+                if src not in ('user', 'agent', 'scribe', 'auto'):
+                    src = 'agent'
                 new_panel = {
                     "id": f"panel-{int(time.time())}-{bid}",
                     "title": payload.get('title', 'Untitled Panel'),
                     "type": "notes",
-                    "source": "agent",
+                    "source": src,
                     "body": payload.get('body', ''),
                     "grabs": [],
                     "createdAt": now,
-                    "updatedAt": now
+                    "updatedAt": now,
                 }
+                if payload.get('importance'):
+                    new_panel['importance'] = payload.get('importance')
                 state.setdefault('panels', []).append(new_panel)
                 _save_clipboard(state)
                 return self._send_json({"ok": True, "panel": new_panel})
