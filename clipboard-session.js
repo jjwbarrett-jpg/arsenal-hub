@@ -29,19 +29,27 @@
 
   // ===== CONSTANTS =====
   var STORAGE_KEY = 'arsenal-hub-clipboard-session-v1';
+  var PROJECT_KEY = 'arsenal-hub-clipboard-project-v1';
   var BODY_DEBOUNCE_MS = 500;
   var POLL_INTERVAL_MS = 15000;  // 15s server poll
+  var DEFAULT_PROJECTS = ['default', 'arsenal-hub', 'aidailine'];
 
   // Server URL — same origin as the page, uses kanban_server.py :9121
   var API_BASE = window.location.origin.replace(':5000', ':9121');
   var API_CLIPBOARD = API_BASE + '/api/clipboard';
+  var API_SESSIONS = API_CLIPBOARD + '/sessions';
+  var API_SAVE = API_CLIPBOARD + '/save';
+  var API_NEW = API_CLIPBOARD + '/new';
 
   // ===== STATE =====
-  var state = null;           // { sessionId, startedAt, panels: [] }
+  var state = null;           // { sessionId, startedAt, project, name, panels: [] }
   var currentPanelId = null;  // null = index view; string = detail view
   var bodyDebounceTimer = null;
   var pollTimer = null;       // eslint-disable-line no-unused-vars
   var lastServerHash = '';    // fingerprint to detect agent changes
+  var currentProject = 'default';
+  var knownProjects = DEFAULT_PROJECTS.slice();
+  var savedSessions = [];     // [{id, name, project, date, panelCount}]
 
   // ===== ID GENERATOR =====
   function genId(prefix) {
@@ -104,8 +112,79 @@
     }
   }
 
+  // ===== PROJECT PREFERENCE =====
+  function loadProjectPref() {
+    try {
+      var p = localStorage.getItem(PROJECT_KEY);
+      if (p && typeof p === 'string') return p;
+    } catch (_) { /* ignore */ }
+    return 'default';
+  }
+
+  function saveProjectPref(project) {
+    currentProject = project || 'default';
+    try {
+      localStorage.setItem(PROJECT_KEY, currentProject);
+    } catch (_) { /* ignore */ }
+    if (state) {
+      state.project = currentProject;
+    }
+  }
+
+  // ===== HTTP HELPERS =====
+  function apiGet(url, callback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url);
+    xhr.timeout = 5000;
+    xhr.onload = function () {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          callback(null, JSON.parse(xhr.responseText));
+          return;
+        } catch (e) {
+          callback(e);
+          return;
+        }
+      }
+      callback(new Error('HTTP ' + xhr.status));
+    };
+    xhr.onerror = function () { callback(new Error('network')); };
+    xhr.ontimeout = function () { callback(new Error('timeout')); };
+    xhr.send();
+  }
+
+  function apiPost(url, body, callback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.timeout = 5000;
+    xhr.onload = function () {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          callback(null, JSON.parse(xhr.responseText || '{}'));
+          return;
+        } catch (e) {
+          callback(e);
+          return;
+        }
+      }
+      var errMsg = 'HTTP ' + xhr.status;
+      try {
+        var errBody = JSON.parse(xhr.responseText);
+        if (errBody && errBody.error) errMsg = errBody.error;
+      } catch (_) { /* ignore */ }
+      callback(new Error(errMsg));
+    };
+    xhr.onerror = function () { callback(new Error('network')); };
+    xhr.ontimeout = function () { callback(new Error('timeout')); };
+    xhr.send(JSON.stringify(body || {}));
+  }
+
   // ===== SERVER SYNC =====
   function syncToServer() {
+    if (!state) return;
+    // Keep project aligned with selector
+    state.project = currentProject || state.project || 'default';
     var xhr = new XMLHttpRequest();
     xhr.open('POST', API_CLIPBOARD);
     xhr.setRequestHeader('Content-Type', 'application/json');
@@ -125,6 +204,12 @@
           if (serverState && serverState.sessionId &&
               (Array.isArray(serverState.panels) || Array.isArray(serverState.subjects))) {
             state = migrateState(serverState);
+            if (state.project) {
+              currentProject = state.project;
+              saveProjectPref(currentProject);
+            } else {
+              state.project = currentProject;
+            }
             lastServerHash = stateHash(state);
             saveLocal();  // cache migrated copy
             callback(true);
@@ -137,6 +222,255 @@
     xhr.onerror = function () { callback(false); };
     xhr.ontimeout = function () { callback(false); };
     xhr.send();
+  }
+
+  // ===== SESSION LIST / SAVE / LOAD / NEW =====
+  function refreshSessionList(callback) {
+    var url = API_SESSIONS + '?project=' + encodeURIComponent(currentProject || '');
+    apiGet(url, function (err, data) {
+      if (!err && data) {
+        savedSessions = Array.isArray(data.sessions) ? data.sessions : [];
+        if (Array.isArray(data.projects) && data.projects.length) {
+          knownProjects = mergeProjectLists(DEFAULT_PROJECTS, data.projects);
+        }
+      } else {
+        savedSessions = [];
+      }
+      populateLoadDropdown();
+      populateProjectSelect();
+      if (callback) callback(err, data);
+    });
+  }
+
+  function mergeProjectLists(a, b) {
+    var seen = {};
+    var out = [];
+    (a || []).concat(b || []).forEach(function (p) {
+      if (!p || seen[p]) return;
+      seen[p] = true;
+      out.push(p);
+    });
+    out.sort(function (x, y) {
+      return x.toLowerCase().localeCompare(y.toLowerCase());
+    });
+    return out;
+  }
+
+  function populateLoadDropdown() {
+    var sel = document.getElementById('cs-load-session');
+    if (!sel) return;
+    var prev = sel.value;
+    sel.innerHTML = '';
+    var placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Load Session…';
+    sel.appendChild(placeholder);
+
+    if (!savedSessions.length) {
+      var empty = document.createElement('option');
+      empty.value = '';
+      empty.disabled = true;
+      empty.textContent = '(no saved sessions)';
+      sel.appendChild(empty);
+      return;
+    }
+
+    savedSessions.forEach(function (s) {
+      var opt = document.createElement('option');
+      opt.value = s.id;
+      var label = s.name || s.id;
+      var count = typeof s.panelCount === 'number' ? s.panelCount : 0;
+      var dateBit = '';
+      if (s.date) {
+        try {
+          dateBit = ' · ' + new Date(s.date).toLocaleDateString();
+        } catch (_) {
+          dateBit = ' · ' + s.date;
+        }
+      }
+      opt.textContent = label + ' (' + count + ' notes)' + dateBit;
+      sel.appendChild(opt);
+    });
+
+    if (prev) sel.value = prev;
+  }
+
+  function populateProjectSelect() {
+    var sel = document.getElementById('cs-project-select');
+    if (!sel) return;
+    var list = mergeProjectLists(knownProjects, [currentProject]);
+    // Ensure free-typed / active projects appear
+    if (state && state.project) list = mergeProjectLists(list, [state.project]);
+    knownProjects = list;
+    sel.innerHTML = '';
+    list.forEach(function (p) {
+      var opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p;
+      sel.appendChild(opt);
+    });
+    sel.value = currentProject;
+    if (sel.value !== currentProject) {
+      // Project not in list — add it
+      var opt = document.createElement('option');
+      opt.value = currentProject;
+      opt.textContent = currentProject;
+      sel.appendChild(opt);
+      sel.value = currentProject;
+    }
+  }
+
+  function updateSessionLabel() {
+    var el = document.getElementById('cs-session-label');
+    if (!el || !state) return;
+    var name = state.name || state.sessionId || 'unsaved';
+    el.textContent = name;
+    el.title = 'Session: ' + name + (state.project ? ' · ' + state.project : '');
+  }
+
+  function saveNamedSession() {
+    var suggested = (state && state.name) || '';
+    var name = prompt('Save session as:', suggested);
+    if (name === null) return; // cancelled
+    name = (name || '').trim();
+    if (!name) {
+      alert('Session name is required.');
+      return;
+    }
+    // Flush current state to server first so save captures latest panels
+    if (!state) {
+      alert('Nothing to save yet.');
+      return;
+    }
+    state.project = currentProject;
+    saveLocal();
+    apiPost(API_CLIPBOARD, state, function (syncErr) {
+      if (syncErr) {
+        console.warn('[ClipboardSession] pre-save sync failed:', syncErr);
+        // Continue — server may still have a recent auto-save
+      }
+      apiPost(API_SAVE, { name: name, project: currentProject }, function (err, data) {
+        if (err) {
+          alert('Save failed: ' + err.message);
+          return;
+        }
+        if (data && data.id && state) {
+          state.sessionId = data.id;
+          state.name = data.name || name;
+          state.project = data.project || currentProject;
+          lastServerHash = stateHash(state);
+          saveLocal();
+          updateSessionLabel();
+        }
+        refreshSessionList();
+      });
+    });
+  }
+
+  function loadNamedSession(sessionId) {
+    if (!sessionId) return;
+    var url = API_SESSIONS + '/' + encodeURIComponent(sessionId) +
+      '?project=' + encodeURIComponent(currentProject || '');
+    apiGet(url, function (err, data) {
+      // reset dropdown to placeholder
+      var sel = document.getElementById('cs-load-session');
+      if (sel) sel.value = '';
+
+      if (err || !data || !data.sessionId) {
+        alert('Load failed: ' + (err ? err.message : 'invalid session'));
+        return;
+      }
+      state = migrateState(data);
+      if (state.project) {
+        currentProject = state.project;
+        try { localStorage.setItem(PROJECT_KEY, currentProject); } catch (_) { /* ignore */ }
+      } else {
+        state.project = currentProject;
+      }
+      lastServerHash = stateHash(state);
+      saveLocal();
+      editingPanelId = null;
+      currentPanelId = null;
+      showIndex();
+      refreshSessionList();
+    });
+  }
+
+  function startNewSession() {
+    if (state && state.panels && state.panels.length > 0) {
+      if (!confirm('Start a new session? Current notes stay saved under this project; the board will clear.')) {
+        return;
+      }
+    }
+    // Persist current before clearing (server also archives on /new)
+    function doNew() {
+      apiPost(API_NEW, { project: currentProject }, function (err, data) {
+        if (err) {
+          alert('New session failed: ' + err.message);
+          return;
+        }
+        if (data && data.session) {
+          state = migrateState(data.session);
+        } else {
+          state = {
+            sessionId: genId('sess'),
+            startedAt: new Date().toISOString(),
+            project: currentProject,
+            name: null,
+            panels: []
+          };
+          persist();
+        }
+        if (!state.project) state.project = currentProject;
+        lastServerHash = stateHash(state);
+        saveLocal();
+        editingPanelId = null;
+        currentPanelId = null;
+        showIndex();
+        refreshSessionList();
+      });
+    }
+    if (state) {
+      state.project = currentProject;
+      saveLocal();
+      apiPost(API_CLIPBOARD, state, function () { doNew(); });
+    } else {
+      doNew();
+    }
+  }
+
+  function wireSessionToolbar() {
+    var saveBtn = document.getElementById('cs-save-session-btn');
+    var loadSel = document.getElementById('cs-load-session');
+    var newBtn = document.getElementById('cs-new-session-btn');
+    var projSel = document.getElementById('cs-project-select');
+
+    if (saveBtn) {
+      saveBtn.addEventListener('click', function () { saveNamedSession(); });
+    }
+    if (loadSel) {
+      loadSel.addEventListener('change', function () {
+        var id = loadSel.value;
+        if (id) loadNamedSession(id);
+      });
+    }
+    if (newBtn) {
+      newBtn.addEventListener('click', function () { startNewSession(); });
+    }
+    if (projSel) {
+      projSel.addEventListener('change', function () {
+        var next = projSel.value || 'default';
+        saveProjectPref(next);
+        if (state) {
+          state.project = next;
+          persist();
+        }
+        refreshSessionList();
+        updateSessionLabel();
+      });
+    }
+    updateSessionLabel();
+    refreshSessionList();
   }
 
   // ===== POLL SERVER (agent-change detection) =====
@@ -357,9 +691,30 @@
     var header = document.createElement('div');
     header.className = 'cs-notes-header';
     header.innerHTML =
-      '<span class="cs-notes-title">Clipboard</span>' +
+      '<div class="cs-notes-header-left">' +
+        '<span class="cs-notes-title">Clipboard</span>' +
+        '<span class="cs-session-label" id="cs-session-label" title="Current session"></span>' +
+      '</div>' +
       '<button class="btn-small" id="cs-download-btn">⬇ Export Notes</button>';
     main.appendChild(header);
+
+    // --- Session toolbar: Save / Load / New + Project filter ---
+    var toolbar = document.createElement('div');
+    toolbar.className = 'cs-session-toolbar';
+    toolbar.innerHTML =
+      '<div class="cs-session-actions">' +
+        '<button type="button" class="btn-small" id="cs-save-session-btn">Save Session</button>' +
+        '<select class="cs-session-select" id="cs-load-session" title="Load a past session" aria-label="Load Session">' +
+          '<option value="">Load Session…</option>' +
+        '</select>' +
+        '<button type="button" class="btn-small" id="cs-new-session-btn">New Session</button>' +
+      '</div>' +
+      '<div class="cs-session-project">' +
+        '<label class="cs-session-project-label" for="cs-project-select">Project:</label>' +
+        '<select class="cs-session-select" id="cs-project-select" title="Filter sessions by project" aria-label="Project">' +
+        '</select>' +
+      '</div>';
+    main.appendChild(toolbar);
 
     // --- Scrollable saved notes list ---
     var listArea = document.createElement('div');
@@ -393,6 +748,7 @@
 
     renderNoteList();
     wireNoteInput();
+    wireSessionToolbar();
 
     // Download handler
     document.getElementById('cs-download-btn').addEventListener('click', function () {
@@ -718,15 +1074,20 @@
 
   // ===== INIT =====
   function init() {
+    currentProject = loadProjectPref();
     loadFromServer(function (serverOk) {
       if (!serverOk) {
         var local = loadLocal();
         if (local) {
           state = local;
+          if (state.project) currentProject = state.project;
+          else state.project = currentProject;
         } else {
           state = {
             sessionId: genId('sess'),
             startedAt: new Date().toISOString(),
+            project: currentProject,
+            name: null,
             panels: []
           };
           persist();

@@ -17,7 +17,7 @@ except ImportError:
     _yaml = None
     _YAML_OK = False
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 KANBAN_DB = os.path.expanduser("~/.hermes/kanban.db")
 KANBAN_BOARDS_DIR = os.path.expanduser("~/.hermes/kanban/boards")
@@ -44,40 +44,310 @@ ACTIVE_STATUSES = ["triage", "todo", "ready", "in_progress", "blocked"]
 _hub_state = {}
 
 # --- Clipboard Session ---
-CLIPBOARD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".files", "clipboard-session.json")
+_FILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".files")
+CLIPBOARD_FILE = os.path.join(_FILES_DIR, "clipboard-session.json")
+SESSIONS_DIR = os.path.join(_FILES_DIR, "sessions")
+DEFAULT_CLIPBOARD_PROJECT = "default"
 
 # --- Skills directory ---
 SKILLS_DIR = os.path.expanduser("~/.hermes/skills")
 
-def _load_clipboard():
-    """Load clipboard state from JSON file. Returns default if missing/corrupt.
-    Accepts both `panels` (v0.3+) and legacy `subjects` keys.
-    """
-    try:
-        if os.path.exists(CLIPBOARD_FILE):
-            with open(CLIPBOARD_FILE, 'r') as f:
-                data = json.load(f)
-            if data and 'sessionId' in data and (
-                    isinstance(data.get('panels'), list) or
-                    isinstance(data.get('subjects'), list)):
-                return data
-    except (json.JSONDecodeError, IOError):
-        pass
+
+def _clipboard_now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _sanitize_segment(value, fallback="default"):
+    """Safe path segment for project / session filenames."""
+    raw = (value or "").strip()
+    cleaned = re.sub(r"[^\w.\-]+", "-", raw, flags=re.UNICODE).strip(".-")
+    return cleaned[:80] if cleaned else fallback
+
+
+def _slugify_session_name(name):
+    slug = re.sub(r"[^\w]+", "-", (name or "").strip().lower(), flags=re.UNICODE)
+    slug = slug.strip("-")
+    return slug[:60] if slug else "session"
+
+
+def _normalize_clipboard_state(data):
+    """Migrate legacy keys and ensure required metadata fields."""
+    if not isinstance(data, dict):
+        return None
+    if "subjects" in data and "panels" not in data:
+        data["panels"] = data.pop("subjects")
+    if "sessionId" not in data:
+        return None
+    if not isinstance(data.get("panels"), list) and not isinstance(data.get("subjects"), list):
+        return None
+    data.setdefault("panels", [])
+    data.setdefault("project", DEFAULT_CLIPBOARD_PROJECT)
+    data.setdefault("name", None)
+    data.setdefault("startedAt", _clipboard_now())
+    return data
+
+
+def _default_clipboard(project=None, name=None):
     return {
-        "sessionId": f"sess-{int(time.time())}",
-        "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "panels": []
+        "sessionId": f"sess-{int(time.time())}-{os.urandom(3).hex()}",
+        "startedAt": _clipboard_now(),
+        "project": project or DEFAULT_CLIPBOARD_PROJECT,
+        "name": name,
+        "panels": [],
     }
 
-def _save_clipboard(state):
-    """Persist clipboard state to JSON file."""
+
+def _session_file_path(project, session_id):
+    proj = _sanitize_segment(project, DEFAULT_CLIPBOARD_PROJECT)
+    sid = _sanitize_segment(session_id, "session")
+    return os.path.join(SESSIONS_DIR, proj, f"{sid}.json")
+
+
+def _read_json_file(path):
     try:
-        os.makedirs(os.path.dirname(CLIPBOARD_FILE), exist_ok=True)
-        with open(CLIPBOARD_FILE, 'w') as f:
-            json.dump(state, f, indent=2)
-        return True
-    except IOError:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+
+
+def _find_session_file(session_id, project=None):
+    """Locate a saved session file by id, optionally scoped to a project."""
+    sid = _sanitize_segment(session_id, "")
+    if not sid:
+        return None
+    if project:
+        path = _session_file_path(project, sid)
+        return path if os.path.isfile(path) else None
+    if not os.path.isdir(SESSIONS_DIR):
+        return None
+    # Prefer exact project-folder match first; fall back to any project
+    for entry in sorted(os.listdir(SESSIONS_DIR)):
+        candidate = os.path.join(SESSIONS_DIR, entry, f"{sid}.json")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _most_recent_session_path():
+    """Return path of the newest session file under .files/sessions/, or None."""
+    newest_path = None
+    newest_mtime = -1
+    if not os.path.isdir(SESSIONS_DIR):
+        return None
+    for root, _dirs, files in os.walk(SESSIONS_DIR):
+        for name in files:
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(root, name)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            if mtime > newest_mtime:
+                newest_mtime = mtime
+                newest_path = path
+    return newest_path
+
+
+def _session_meta_from_data(data, path=None):
+    """Build list-item metadata for a session file."""
+    panels = data.get("panels") or data.get("subjects") or []
+    date = data.get("savedAt") or data.get("startedAt") or ""
+    if not date and path:
+        try:
+            date = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.path.getmtime(path)))
+        except OSError:
+            date = ""
+    return {
+        "id": data.get("sessionId") or (os.path.splitext(os.path.basename(path))[0] if path else ""),
+        "name": data.get("name") or data.get("sessionId") or "Untitled",
+        "project": data.get("project") or DEFAULT_CLIPBOARD_PROJECT,
+        "date": date,
+        "panelCount": len(panels) if isinstance(panels, list) else 0,
+    }
+
+
+def _list_clipboard_sessions(project=None):
+    """List saved sessions: [{id, name, project, date, panelCount}]."""
+    results = []
+    if not os.path.isdir(SESSIONS_DIR):
+        return results
+
+    if project:
+        project_dirs = [_sanitize_segment(project, DEFAULT_CLIPBOARD_PROJECT)]
+    else:
+        try:
+            project_dirs = [
+                d for d in os.listdir(SESSIONS_DIR)
+                if os.path.isdir(os.path.join(SESSIONS_DIR, d))
+            ]
+        except OSError:
+            project_dirs = []
+
+    for proj in project_dirs:
+        proj_path = os.path.join(SESSIONS_DIR, proj)
+        if not os.path.isdir(proj_path):
+            continue
+        try:
+            names = os.listdir(proj_path)
+        except OSError:
+            continue
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(proj_path, name)
+            data = _normalize_clipboard_state(_read_json_file(path))
+            if not data:
+                # Fall back to filename-only meta if content is unreadable
+                results.append({
+                    "id": os.path.splitext(name)[0],
+                    "name": os.path.splitext(name)[0],
+                    "project": proj,
+                    "date": "",
+                    "panelCount": 0,
+                })
+                continue
+            # Prefer folder project for filtering consistency
+            data["project"] = data.get("project") or proj
+            results.append(_session_meta_from_data(data, path))
+
+    results.sort(key=lambda s: s.get("date") or "", reverse=True)
+    return results
+
+
+def _list_clipboard_projects():
+    """Project names discovered under sessions/ plus defaults."""
+    projects = {DEFAULT_CLIPBOARD_PROJECT, "arsenal-hub", "aidailine"}
+    if os.path.isdir(SESSIONS_DIR):
+        try:
+            for entry in os.listdir(SESSIONS_DIR):
+                if os.path.isdir(os.path.join(SESSIONS_DIR, entry)):
+                    projects.add(entry)
+        except OSError:
+            pass
+    # Include project from active session if present
+    active = _load_clipboard_raw()
+    if active and active.get("project"):
+        projects.add(active["project"])
+    return sorted(projects, key=lambda p: p.lower())
+
+
+def _load_clipboard_raw():
+    """Load active clipboard file without falling back to sessions."""
+    if not os.path.exists(CLIPBOARD_FILE):
+        return None
+    return _normalize_clipboard_state(_read_json_file(CLIPBOARD_FILE))
+
+
+def _load_clipboard():
+    """Load clipboard state from disk. Survives Hub restarts.
+
+    Order: active clipboard-session.json → most recent named/auto session → empty default.
+    Accepts both `panels` (v0.3+) and legacy `subjects` keys.
+    """
+    data = _load_clipboard_raw()
+    if data:
+        return data
+
+    recent = _most_recent_session_path()
+    if recent:
+        data = _normalize_clipboard_state(_read_json_file(recent))
+        if data:
+            # Restore as active so subsequent GETs stay consistent
+            _save_clipboard(data)
+            return data
+
+    return _default_clipboard()
+
+
+def _save_clipboard(state):
+    """Persist clipboard state to active file and auto-mirror under sessions/<project>/."""
+    data = _normalize_clipboard_state(state if isinstance(state, dict) else None)
+    if not data:
         return False
+    data["savedAt"] = _clipboard_now()
+    try:
+        os.makedirs(_FILES_DIR, exist_ok=True)
+        with open(CLIPBOARD_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+        # Auto-save mirror — every mutation lands under sessions/<project>/<sessionId>.json
+        session_path = _session_file_path(data.get("project"), data.get("sessionId"))
+        os.makedirs(os.path.dirname(session_path), exist_ok=True)
+        with open(session_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except OSError:
+        return False
+
+
+def _save_named_clipboard_session(name, project=None):
+    """Name the current session and persist under sessions/<project>/<id>.json."""
+    state = _load_clipboard()
+    name = (name or "").strip()
+    if not name:
+        return None, "name is required"
+
+    proj = (project or state.get("project") or DEFAULT_CLIPBOARD_PROJECT).strip()
+    proj = _sanitize_segment(proj, DEFAULT_CLIPBOARD_PROJECT)
+    slug = _slugify_session_name(name)
+    date_prefix = time.strftime("%Y%m%d")
+    base_id = f"{date_prefix}-{slug}"
+    new_id = base_id
+
+    # Avoid clobbering a different session that already uses this id
+    existing_path = _session_file_path(proj, new_id)
+    if os.path.isfile(existing_path):
+        existing = _normalize_clipboard_state(_read_json_file(existing_path))
+        if existing and existing.get("sessionId") != state.get("sessionId"):
+            new_id = f"{base_id}-{os.urandom(2).hex()}"
+
+    old_id = state.get("sessionId")
+    old_project = state.get("project") or DEFAULT_CLIPBOARD_PROJECT
+    state["name"] = name
+    state["project"] = proj
+    state["sessionId"] = new_id
+    if not _save_clipboard(state):
+        return None, "Failed to save session"
+
+    # Drop previous auto-id mirror when the id/project changed
+    if old_id and (old_id != new_id or _sanitize_segment(old_project) != proj):
+        old_path = _session_file_path(old_project, old_id)
+        try:
+            if os.path.isfile(old_path) and os.path.abspath(old_path) != os.path.abspath(
+                _session_file_path(proj, new_id)
+            ):
+                os.remove(old_path)
+        except OSError:
+            pass
+
+    return {"id": new_id, "name": name, "project": proj, "session": state}, None
+
+
+def _new_clipboard_session(project=None):
+    """Archive current (already auto-saved) and start a fresh empty session."""
+    current = _load_clipboard()
+    # Ensure latest state is mirrored before clearing
+    _save_clipboard(current)
+    proj = (project or current.get("project") or DEFAULT_CLIPBOARD_PROJECT).strip()
+    fresh = _default_clipboard(project=_sanitize_segment(proj, DEFAULT_CLIPBOARD_PROJECT))
+    if not _save_clipboard(fresh):
+        return None, "Failed to create new session"
+    return fresh, None
+
+
+def _activate_clipboard_session(session_id, project=None):
+    """Load a saved session and make it the active clipboard."""
+    path = _find_session_file(session_id, project)
+    if not path:
+        return None
+    data = _normalize_clipboard_state(_read_json_file(path))
+    if not data:
+        return None
+    if not _save_clipboard(data):
+        return None
+    return data
 
 
 def _parse_frontmatter_regex(text):
@@ -504,6 +774,26 @@ class KanbanHandler(BaseHTTPRequestHandler):
         if path == '/api/clipboard':
             return self._send_json(_load_clipboard())
 
+        if path == '/api/clipboard/sessions':
+            project = params.get('project', [None])[0]
+            # Empty string means "all projects"
+            if project == '':
+                project = None
+            return self._send_json({
+                "sessions": _list_clipboard_sessions(project),
+                "projects": _list_clipboard_projects(),
+            })
+
+        if path.startswith('/api/clipboard/sessions/'):
+            session_id = unquote(path[len('/api/clipboard/sessions/'):].strip('/'))
+            if not session_id:
+                return self._send_json({"error": "session id required"}, 400)
+            project = params.get('project', [None])[0] or None
+            data = _activate_clipboard_session(session_id, project)
+            if not data:
+                return self._send_json({"error": "Session not found"}, 404)
+            return self._send_json(data)
+
         if path == '/api/kanban/state':
             # Tab agent endpoint — summarized kanban state from kanban.db
             board = params.get('board', [None])[0]
@@ -633,6 +923,31 @@ class KanbanHandler(BaseHTTPRequestHandler):
             if _save_clipboard(body):
                 return self._send_json({"ok": True})
             return self._send_json({"error": "Failed to save clipboard"}, 500)
+
+        if path == '/api/clipboard/save':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+            name = body.get('name', '')
+            project = body.get('project')
+            result, err = _save_named_clipboard_session(name, project)
+            if err:
+                status = 400 if 'required' in err else 500
+                return self._send_json({"error": err}, status)
+            return self._send_json({
+                "ok": True,
+                "id": result["id"],
+                "name": result["name"],
+                "project": result["project"],
+            })
+
+        if path == '/api/clipboard/new':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+            project = body.get('project') if isinstance(body, dict) else None
+            fresh, err = _new_clipboard_session(project)
+            if err:
+                return self._send_json({"error": err}, 500)
+            return self._send_json({"ok": True, "session": fresh})
 
         if path == '/api/clipboard/agent':
             content_len = int(self.headers.get('Content-Length', 0))

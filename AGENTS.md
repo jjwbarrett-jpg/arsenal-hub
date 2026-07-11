@@ -48,7 +48,13 @@ All endpoints on port **9121** unless noted. All responses are JSON.
 | `GET` | `/api/clipboard` | Full clipboard state (panels, sessionId, timestamps) |
 | `POST` | `/api/clipboard` | Full sync (browser overwrites state — trusted user channel) |
 | `POST` | `/api/clipboard/agent` | Agent actions: `create-panel`, `add-grab`, `set-body`, `set-title` |
+| `GET` | `/api/clipboard/sessions` | List saved sessions (`?project=` filter). Returns `{sessions, projects}` |
+| `GET` | `/api/clipboard/sessions/{id}` | Load a saved session and make it active (`?project=` optional) |
+| `POST` | `/api/clipboard/save` | Name+persist current session: `{name, project}` → `{id}` |
+| `POST` | `/api/clipboard/new` | Archive current (auto-saved), start empty session: `{project?}` |
 | `POST` | `/api/scribe/ingest` | **Universal ingest** — the primary agent integration surface (see below) |
+
+Clipboard state auto-saves on every mutation to `.files/clipboard-session.json` and mirrors under `.files/sessions/<project>/<sessionId>.json`.
 
 ### Kanban
 

@@ -2300,6 +2300,14 @@ body.electron-browser-panel .chat-slideout {
   align-items: center;
   padding: 12px 0;
   flex-shrink: 0;
+  gap: 12px;
+}
+
+.cs-notes-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
 }
 
 .cs-notes-title {
@@ -2308,6 +2316,66 @@ body.electron-browser-panel .chat-slideout {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
+}
+
+.cs-session-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+
+/* Session toolbar: Save / Load / New + Project */
+.cs-session-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 0 0 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 8px;
+}
+
+.cs-session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cs-session-project {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cs-session-project-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.cs-session-select {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--border-subtle, var(--border));
+  background: var(--bg-card, var(--bg, #121418));
+  color: var(--text-primary, var(--text));
+  max-width: 220px;
+  cursor: pointer;
+}
+
+.cs-session-select:focus {
+  outline: none;
+  border-color: var(--border-mid, var(--accent));
 }
 
 /* Scrollable saved-notes list */
