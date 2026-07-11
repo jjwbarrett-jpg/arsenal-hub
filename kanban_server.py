@@ -10,6 +10,8 @@ import time
 import sys
 import os
 import re
+import threading
+from pathlib import Path
 try:
     import yaml as _yaml
     _YAML_OK = True
@@ -18,6 +20,8 @@ except ImportError:
     _YAML_OK = False
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 KANBAN_DB = os.path.expanduser("~/.hermes/kanban.db")
 KANBAN_BOARDS_DIR = os.path.expanduser("~/.hermes/kanban/boards")
@@ -48,6 +52,79 @@ CLIPBOARD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".file
 
 # --- Skills directory ---
 SKILLS_DIR = os.path.expanduser("~/.hermes/skills")
+
+# --- Harvest watcher (TUI session harvests → Clipboard Proposed cards) ---
+# Windows native path preferred; WSL fallback when running under Linux.
+if os.name == "nt" or Path(r"C:\Core-User\mailbox").exists():
+    HARVEST_DIR = Path(r"C:\Core-User\mailbox\harvests")
+else:
+    HARVEST_DIR = Path("/mnt/c/Core-User/mailbox/harvests")
+HARVEST_POLL_SECONDS = 60
+HARVEST_CLIPBOARD_URL = "http://127.0.0.1:9121/api/clipboard/agent"
+
+
+def process_harvest_file(filepath: Path):
+    """Parse a harvest markdown file and POST items to Clipboard as Proposed cards.
+
+    Only renames to .md.done when every item POSTs successfully (or there are no
+    items). Malformed files and Clipboard outages leave the file for retry.
+    """
+    try:
+        content = filepath.read_text(encoding="utf-8")
+        items = []
+        current_section = None
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("## "):
+                current_section = line[3:].strip()
+            elif line.startswith("- ") and current_section:
+                item_text = line[2:].strip()
+                if item_text:  # empty bullets skipped
+                    items.append({"section": current_section, "text": item_text})
+
+        # Empty sections / no bullets: nothing to post — mark done so we don't loop forever
+        any_failed = False
+        for item in items:
+            try:
+                body = json.dumps({
+                    "action": "create-panel",
+                    "payload": {
+                        "title": f"{item['section']}: {item['text'][:60]}",
+                        "body": item["text"],
+                        "source": "scribe-tui",
+                    },
+                }).encode("utf-8")
+                req = Request(
+                    HARVEST_CLIPBOARD_URL,
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(req, timeout=5) as resp:
+                    if getattr(resp, "status", 200) >= 400:
+                        any_failed = True
+                    else:
+                        resp.read()
+            except (URLError, OSError, TimeoutError, json.JSONDecodeError, ValueError):
+                any_failed = True  # Clipboard down / bad response — retry next cycle
+
+        # Only rename when all POSTs succeeded (or zero items)
+        if not any_failed:
+            filepath.rename(filepath.with_suffix(".md.done"))
+    except Exception:
+        pass  # malformed / unreadable — leave file, retry next cycle
+
+
+def harvest_watcher_loop():
+    """Background thread: poll harvests folder, process new .md files."""
+    HARVEST_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            for f in sorted(HARVEST_DIR.glob("*.md")):
+                process_harvest_file(f)
+        except Exception:
+            pass
+        time.sleep(HARVEST_POLL_SECONDS)
 
 def _load_clipboard():
     """Load clipboard state from JSON file. Returns default if missing/corrupt.
@@ -651,11 +728,13 @@ class KanbanHandler(BaseHTTPRequestHandler):
             if action in ('create-panel', 'create-subject'):
                 now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 bid = os.urandom(4).hex()
+                # source: agent default; harvest watcher uses "scribe-tui"
+                src = payload.get('source') or body.get('source') or 'agent'
                 new_panel = {
                     "id": f"panel-{int(time.time())}-{bid}",
                     "title": payload.get('title', 'Untitled Panel'),
                     "type": "notes",
-                    "source": "agent",
+                    "source": src,
                     "body": payload.get('body', ''),
                     "grabs": [],
                     "createdAt": now,
@@ -843,6 +922,11 @@ def main():
     for i, arg in enumerate(sys.argv):
         if arg == '--port' and i + 1 < len(sys.argv):
             port = int(sys.argv[i + 1])
+
+    # Background: auto-ingest TUI session harvests into Clipboard
+    t = threading.Thread(target=harvest_watcher_loop, name="harvest-watcher", daemon=True)
+    t.start()
+    print(f"Harvest watcher polling {HARVEST_DIR} every {HARVEST_POLL_SECONDS}s")
 
     server = HTTPServer(('0.0.0.0', port), KanbanHandler)
     print(f"Kanban server running on http://127.0.0.1:{port}")
