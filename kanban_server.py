@@ -695,6 +695,43 @@ class KanbanHandler(BaseHTTPRequestHandler):
 
             return self._send_json({"error": f"Unknown action: {action}"}, 400)
 
+        # --- Universal Scribe Ingest ---
+        # Framework-agnostic: any agent POSTs notes/decisions/actions to Hub Clipboard
+        if path == '/api/scribe/ingest':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+            agent = body.get('agent', 'unknown')
+            session = body.get('session', '')
+            items = body.get('items', [])
+            state = _load_clipboard()
+            # Normalise legacy subjects → panels
+            if 'subjects' in state and 'panels' not in state:
+                state['panels'] = state.pop('subjects')
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            ingested = 0
+            for item in items:
+                item_type = item.get('type', 'note')
+                text = item.get('text', '').strip()
+                if not text:
+                    continue
+                bid = os.urandom(4).hex()
+                panel = {
+                    "id": f"panel-{int(time.time())}-{bid}",
+                    "title": f"[{item_type}] {text[:60]}",
+                    "type": "notes",
+                    "source": agent,
+                    "body": text,
+                    "grabs": [],
+                    "createdAt": now,
+                    "updatedAt": now,
+                }
+                if session:
+                    panel["session"] = session
+                state.setdefault('panels', []).append(panel)
+                ingested += 1
+            _save_clipboard(state)
+            return self._send_json({"status": "ok", "ingested": ingested})
+
         # Chat proxy — forward to Hermes gateway
         if path == '/api/chat':
             content_len = int(self.headers.get('Content-Length', 0))
