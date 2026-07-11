@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ARSENAL HUB</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="hub.css" />
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@excalidraw/excalidraw@0.17.3/dist/excalidraw.production.min.js"></script>
+</head>
+<body>
+  <!-- Browser chrome (visible when Hub is the active browser page in Electron) -->
+  <div class="hub-browser-chrome" id="hub-browser-chrome" hidden>
+    <div class="hub-browser-nav">
+      <button class="hub-browser-btn" id="hub-browser-back" title="Back" disabled>←</button>
+      <button class="hub-browser-btn" id="hub-browser-forward" title="Forward" disabled>→</button>
+      <button class="hub-browser-btn" id="hub-browser-reload" title="Reload">↻</button>
+      <input class="hub-browser-url" id="hub-browser-url" type="text" placeholder="URL" spellcheck="false" />
+      <button class="hub-browser-btn hub-browser-go" id="hub-browser-go">GO</button>
+    </div>
+  </div>
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="header-left">
+      <button class="hermes-float" id="hermes-float" title="Open chat" aria-label="Open chat">
+        <svg class="hermes-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <path d="M12 3v18M12 3c-2 0-3.5 1.5-3.5 3.5S10 10 12 10s3.5-1.5 3.5-3.5S14 3 12 3z"/>
+          <path d="M8 14c2 2 6 2 8 0M7 17c2.5 2.5 7.5 2.5 10 0"/>
+        </svg>
+      </button>
+      <div class="logo">ARSENAL HUB</div>
+    </div>
+    <div class="header-right">
+      <div class="active-count" id="active-count">⚡ <span id="active-num">0</span> Active</div>
+    </div>
+  </header>
+
+  <!-- TABS -->
+  <div class="tabs">
+    <!-- killed 2026-07-08 — chat lives in slide-out -->
+    <!-- <button class="tab-btn" data-tab="chat">CHAT</button> -->
+    <button class="tab-btn active" data-tab="clipboard-session">CLIPBOARD</button>
+    <button class="tab-btn" data-tab="workflow">WORKFLOW</button>
+    <button class="tab-btn" data-tab="kanban">KANBAN</button>
+    <button class="tab-btn" data-tab="tools">TOOLS</button>
+    <button class="tab-btn" data-tab="blueprints">BLUEPRINTS</button>
+  </div>
+
+  <!-- TAB CONTENT -->
+  <div class="tab-content" id="tab-content">
+
+    <!-- killed 2026-07-08 — chat lives in slide-out -->
+    <!-- <div class="tab-pane" id="pane-chat">
+      <iframe class="chainlit-frame" title="Chainlit Chat" allow="camera;microphone"></iframe>
+    </div> -->
+
+    <!-- ===== TAB: CLIPBOARD (session) — NEW, separate from WORKFLOW→Scratch ===== -->
+    <div class="tab-pane active" id="pane-clipboard-session">
+      <!-- Index / home view -->
+      <div class="cs-pane" id="cs-index"></div>
+      <!-- Subject detail view -->
+      <div class="cs-pane" id="cs-detail" hidden></div>
+    </div>
+
+    <!-- ===== TAB: WORKFLOW ===== -->
+    <div class="tab-pane" id="pane-workflow">
+      <div class="workspace-section">
+        <div class="workspace-tabs" role="tablist">
+          <button class="workspace-tab active" data-workspace="board" role="tab" aria-selected="true">Board</button>
+          <button class="workspace-tab" data-workspace="clipboard" role="tab" aria-selected="false">Scratch</button>
+        </div>
+
+        <!-- Board view -->
+        <div class="workspace-pane active" id="workspace-board" role="tabpanel">
+          <div class="board-toolbar">
+            <button class="btn-small" id="board-add-column" type="button">+ Column</button>
+            <span class="muted small">Drag cards between columns</span>
+          </div>
+          <div class="board-columns" id="board-columns">
+            <!-- populated by planning-board.js -->
+          </div>
+        </div>
+
+        <!-- Clipboard view (dynamic multi-tab) -->
+        <div class="workspace-pane" id="workspace-clipboard" role="tabpanel" hidden>
+          <div class="clipboard-container">
+            <div class="clipboard-tabbar" id="clipboard-tabbar">
+              <div class="clipboard-tabs" id="clipboard-tabs">
+                <!-- dynamic tabs -->
+              </div>
+              <button class="clipboard-add-btn" id="clipboard-add" title="New tab">+</button>
+            </div>
+            <div class="clipboard-surfaces" id="clipboard-surfaces">
+              <!-- dynamic surfaces -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== TAB: KANBAN ===== -->
+    <div class="tab-pane" id="pane-kanban">
+      <div class="kanban-header">
+        <div class="kanban-title-row">
+          <span>KANBAN</span>
+          <select class="board-select" id="kanban-board-select" aria-label="Select board">
+            <option value="default">default</option>
+          </select>
+        </div>
+        <div class="kanban-actions">
+          <button class="btn-primary" id="kanban-create-btn">+ New Task</button>
+          <button class="btn-small" id="kanban-refresh" title="Refresh board">↻</button>
+        </div>
+      </div>
+
+      <div class="kanban-board" id="kanban-board">
+        <!-- columns populated by kanban.js -->
+      </div>
+
+      <!-- Task create/edit modal -->
+      <div class="kanban-modal-overlay" id="kanban-modal-overlay" hidden>
+        <div class="kanban-modal">
+          <div class="kanban-modal-header">
+            <span id="kanban-modal-title">New Task</span>
+            <button class="kanban-modal-close" id="kanban-modal-close" aria-label="Close">×</button>
+          </div>
+          <div class="kanban-modal-body">
+            <label>Title</label>
+            <input type="text" id="kanban-task-title" placeholder="Task title..." />
+            <label>Description</label>
+            <textarea id="kanban-task-body" rows="4" placeholder="Optional description..."></textarea>
+            <div class="kanban-modal-row">
+              <div>
+                <label>Assignee</label>
+                <input type="text" id="kanban-task-assignee" placeholder="e.g. cursor, hermes-manager" />
+              </div>
+              <div>
+                <label>Priority</label>
+                <select id="kanban-task-priority">
+                  <option value="0">Normal</option>
+                  <option value="1">High</option>
+                  <option value="2">Urgent</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label>Tenant / Project</label>
+              <input type="text" id="kanban-task-tenant" placeholder="e.g. arsenal-hub" />
+            </div>
+          </div>
+          <div class="kanban-modal-footer">
+            <button class="btn-secondary" id="kanban-modal-cancel">Cancel</button>
+            <button class="btn-primary" id="kanban-modal-save">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Task detail drawer -->
+      <div class="kanban-drawer" id="kanban-drawer" hidden>
+        <div class="kanban-drawer-header">
+          <span id="kanban-drawer-title">Task Details</span>
+          <button class="kanban-drawer-close" id="kanban-drawer-close" aria-label="Close drawer">×</button>
+        </div>
+        <div class="kanban-drawer-body" id="kanban-drawer-body">
+          <!-- populated by kanban.js -->
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== TAB: TOOLS ===== -->
+    <div class="tab-pane" id="pane-tools">
+      <div class="tools-header">
+        <div>TOOLS</div>
+        <button class="filter-toggle" id="filter-toggle" aria-expanded="false">
+          FILTER ▸
+        </button>
+      </div>
+
+      <!-- Collapsible filter accordion -->
+      <div class="filter-accordion" id="filter-accordion" hidden>
+        <div class="filter-accordion-inner">
+          <button class="tag-btn all active" data-tag="ALL">ALL</button>
+          <div class="tag-list" id="tag-list">
+            <!-- populated by JS -->
+          </div>
+        </div>
+        <div class="filter-hint">Select tag to filter. Click tag on card or ALL to reset.</div>
+      </div>
+
+      <div class="tool-grid" id="tool-grid">
+        <!-- cards populated by JS -->
+      </div>
+    </div>
+
+    <!-- ===== TAB: BLUEPRINTS ===== -->
+    <div class="tab-pane" id="pane-blueprints">
+      <div class="blueprints-header">
+        <div>BLUEPRINTS</div>
+        <button class="btn-primary" id="btn-new-blueprint">+ New Blueprint</button>
+      </div>
+
+      <div class="bp-progress" id="bp-progress" hidden>Decomposing…</div>
+
+      <div class="blueprints-body">
+        <!-- Blueprint list + Tree -->
+        <div class="blueprint-sidebar">
+          <div class="bp-list" id="bp-list">
+            <!-- blueprint picker populated by JS -->
+          </div>
+          <div class="blueprint-tree" id="blueprint-tree">
+            <!-- decomposition tree populated by JS -->
+          </div>
+        </div>
+
+        <!-- Detail / edit panel -->
+        <div class="blueprint-detail" id="blueprint-detail">
+          <div class="detail-empty" id="detail-empty">
+            Create a new blueprint or select a node from the tree.
+          </div>
+
+          <div class="detail-content" id="detail-content" hidden>
+            <div class="detail-selected">
+              <span class="sel-label">Selected:</span>
+              <span id="sel-path"></span>
+            </div>
+
+            <div class="bp-fields">
+              <div class="bp-field">
+                <label>Name</label>
+                <input class="bp-input" id="bp-node-name" type="text" />
+              </div>
+              <div class="bp-field">
+                <label>Description</label>
+                <textarea class="bp-textarea" id="bp-node-desc" rows="4"></textarea>
+              </div>
+              <div class="bp-field">
+                <label>Attributes</label>
+                <div class="bp-attrs" id="bp-node-attrs"></div>
+                <button class="btn-small" id="btn-add-attr" type="button">+ Attribute</button>
+              </div>
+            </div>
+
+            <div class="bp-actions-row">
+              <button class="btn-secondary" id="btn-add-child" type="button">+ Child</button>
+              <button class="btn-secondary" id="btn-remove-node" type="button">Remove</button>
+              <button class="btn-secondary" id="btn-refill" type="button">Re-run AI</button>
+              <button class="btn-secondary" id="btn-approve" type="button">Approve</button>
+            </div>
+
+            <div class="bp-meta">
+              <span id="bp-created"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bp-footer-actions">
+        <button class="btn-secondary" id="btn-save-bp" type="button">Save</button>
+        <button class="btn-primary" id="btn-dispatch" disabled title="Dispatch not wired in MVP">Dispatch</button>
+        <button class="btn-secondary" id="btn-export" type="button">Export Markdown</button>
+        <button class="btn-secondary" id="btn-delete-bp" type="button">Delete</button>
+      </div>
+
+      <!-- Deadlines (minimal / static for Phase 1) -->
+      <div class="deadlines-section">
+        <div class="deadlines-header-row">
+          <span>DEADLINES</span>
+          <button class="btn-small" id="deadline-add" disabled title="Deadline interactivity not in Phase 1">+ Add</button>
+        </div>
+        <div class="deadlines-list" id="deadlines-list">
+          <!-- static examples for Phase 1 -->
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Slide-out chat panel (right side) -->
+  <div class="chat-slideout" id="chat-slideout" hidden>
+    <!-- Drag-resize handle on left edge -->
+    <div class="chat-slideout-handle" id="chat-slideout-handle" title="Drag to resize · Double-click for full screen"></div>
+
+    <div class="chat-slideout-header">
+      <span>Chat</span>
+      <div class="chat-slideout-header-actions">
+        <button class="chat-slideout-new" id="chat-slideout-new" title="New Chat">+</button>
+        <button class="chat-slideout-close" id="chat-slideout-close" aria-label="Close chat">×</button>
+      </div>
+    </div>
+
+    <!-- Toolbar row -->
+    <div class="chat-toolbar" id="chat-toolbar">
+      <button class="chat-tool-btn" id="chat-tool-clipboard" data-tool="clipboard" title="Switch to Clipboard tab">📋</button>
+      <button class="chat-tool-btn" id="chat-tool-intellimod" data-tool="intellimod" title="IntelliMod">🧠</button>
+      <!-- Curated skill buttons (populated by JS) -->
+      <div class="chat-tool-skills" id="chat-tool-skills"></div>
+      <button class="chat-tool-btn chat-tool-more" id="chat-tool-more" title="More tools">+</button>
+    </div>
+
+    <!-- Skills dropdown (populated by JS from /api/skills) -->
+    <div class="skills-dropdown" id="skills-dropdown" hidden>
+      <div class="skills-dropdown-header">Skills</div>
+      <div class="skills-dropdown-list" id="skills-dropdown-list"></div>
+    </div>
+
+    <!-- More tools dropdown -->
+    <div class="chat-more-dropdown" id="chat-tool-more-dropdown" hidden>
+      <button class="chat-more-item" id="chat-more-skills" data-action="browse-skills">🗂 Browse All Skills</button>
+      <button class="chat-more-item" data-action="blueprints">📐 Blueprints</button>
+    </div>
+
+    <!-- Skill popover (shared, moved by JS) -->
+    <div class="skill-popover" id="skill-popover" hidden>
+      <div class="skill-popover-name" id="skill-popover-name"></div>
+      <div class="skill-popover-desc" id="skill-popover-desc"></div>
+      <div class="skill-popover-actions">
+        <button class="btn-primary skill-popover-load" id="skill-popover-load">Load</button>
+        <button class="btn-small skill-popover-close" id="skill-popover-close">Cancel</button>
+      </div>
+    </div>
+
+    <div class="chat-slideout-body">
+      <iframe title="Chainlit Chat" allow="camera;microphone" class="chat-slideout-iframe" id="chat-slideout-iframe"></iframe>
+    </div>
+  </div>
+
+  <!-- IntelliMod slide-out panel -->
+  <div class="chat-slideout" id="intellimod-slideout" hidden>
+    <div class="chat-slideout-handle" id="intellimod-slideout-handle" title="Drag to resize"></div>
+    <div class="chat-slideout-header">
+      <span>🧠 IntelliMod</span>
+      <button class="chat-slideout-close" id="intellimod-slideout-close" aria-label="Close IntelliMod">×</button>
+    </div>
+    <div class="chat-slideout-body">
+      <iframe src="https://j-barrert-intellimod.hf.space" class="chat-slideout-iframe" title="IntelliMod" allow="camera;microphone"></iframe>
+    </div>
+  </div>
+
+  <!-- DISCOVERY TICKER (static) -->
+  <div class="ticker">
+    <div class="ticker-label">DISCOVERY</div>
+    <div class="ticker-track">
+      <div class="ticker-content" id="ticker-content">
+        <span>Antigravity updated Claude Sonnet 4.6 • DeepSeek V4 Pro rate limits adjusted • New GLM 5.2 endpoint available • Google Jules daily quota reset • Hermes proxy stable on 9119 • </span>
+        <span aria-hidden="true">Antigravity updated Claude Sonnet 4.6 • DeepSeek V4 Pro rate limits adjusted • New GLM 5.2 endpoint available • Google Jules daily quota reset • Hermes proxy stable on 9119 • </span>
+      </div>
+    </div>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="decomposer.js"></script>
+  <script src="blueprints.js"></script>
+  <script src="app.js"></script>
+  <script src="planning-board.js"></script>
+  <script src="kanban.js"></script>
+  <script src="clipboard.js"></script>
+  <script src="clipboard-session.js"></script>
+  <script src="tab-agents.js"></script>
+  <script>
+    // Chat iframes target the same host the Hub is served from — works from Windows/LAN,
+    // and survives WSL2 IP changes on reboot (no more hardcoded 127.0.0.1).
+    (function () {
+      var chatUrl = location.protocol + '//' + location.hostname + ':8000';
+      document.querySelectorAll('iframe[title="Chainlit Chat"]').forEach(function (f) { f.src = chatUrl; });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "Test Blueprint",
+  "description": "Does a thing",
+  "target_agent": "any",
+  "created": "",
+  "status": "draft",
+  "core_payload": "Build X",
+  "foundation": [
+    "auth",
+    "database"
+  ],
+  "enhancements": [
+    "dark mode"
+  ],
+  "polish": [
+    "animations"
+  ],
+  "edge_cases": [
+    "error handling"
+  ]
+}

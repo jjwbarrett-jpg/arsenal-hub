@@ -1,0 +1,18 @@
+{
+  "id": "app-weather",
+  "name": "Weather App",
+  "parent": "app",
+  "keywords": ["weather", "forecast", "climate", "temperature", "rain", "meteorology"],
+  "modelTier": "structure",
+  "maxDepth": 4,
+  "branches": [
+    { "name": "Current Conditions", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Forecast Views", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Location Services", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Weather Data API", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Alerts/Warnings", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Widgets", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Maps/Radar", "modelTier": "creative", "maxDepth": 2 },
+    { "name": "Units/Preferences", "modelTier": "structure", "maxDepth": 2 }
+  ]
+}

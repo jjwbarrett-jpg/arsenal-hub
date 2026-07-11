@@ -1,0 +1,18 @@
+{
+  "id": "app-utility",
+  "name": "Utility App",
+  "parent": "app",
+  "keywords": ["utility", "tool", "calculator", "converter", "helper", "productivity tool"],
+  "modelTier": "structure",
+  "maxDepth": 4,
+  "branches": [
+    { "name": "Core Function", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Input Methods", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Output/Results", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "History/Storage", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Shortcuts", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Sharing/Export", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Offline Support", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Customization", "modelTier": "creative", "maxDepth": 2 }
+  ]
+}

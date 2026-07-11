@@ -1,0 +1,18 @@
+{
+  "id": "game-fighting",
+  "name": "Fighting Game",
+  "parent": "game",
+  "keywords": ["fighting", "fighter", "versus", "brawler", "combat", "street fighter", "mortal kombat"],
+  "modelTier": "creative",
+  "maxDepth": 4,
+  "branches": [
+    { "name": "Characters", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Arenas", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Movesets", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Special Moves", "modelTier": "creative", "maxDepth": 2 },
+    { "name": "Health/Damage", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Round System", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Victory/Defeat", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Multiplayer", "modelTier": "structure", "maxDepth": 2 }
+  ]
+}

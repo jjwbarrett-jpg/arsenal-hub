@@ -1,0 +1,17 @@
+{
+  "id": "website",
+  "name": "Website",
+  "keywords": ["website", "web site", "landing page", "portfolio", "blog", "web app"],
+  "modelTier": "structure",
+  "maxDepth": 4,
+  "branches": [
+    { "name": "Pages", "modelTier": "structure", "maxDepth": 3 },
+    { "name": "Navigation", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Content Sections", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "SEO", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Analytics", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Forms/CTA", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Hosting/Deploy", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Accessibility", "modelTier": "structure", "maxDepth": 2 }
+  ]
+}

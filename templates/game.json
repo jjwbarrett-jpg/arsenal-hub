@@ -1,0 +1,13 @@
+{
+  "id": "game",
+  "name": "Game",
+  "subtypes": ["fighting", "platformer", "puzzle", "rpg", "racing", "strategy"],
+  "universal_branches": [
+    { "name": "UI", "modelTier": "structure" },
+    { "name": "Audio", "modelTier": "creative" },
+    { "name": "Settings", "modelTier": "structure" },
+    { "name": "Progression", "modelTier": "creative" },
+    { "name": "Platform", "modelTier": "structure" }
+  ],
+  "keywords": ["game", "video game", "videogame", "gaming"]
+}

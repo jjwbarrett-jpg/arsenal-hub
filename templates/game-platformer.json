@@ -1,0 +1,18 @@
+{
+  "id": "game-platformer",
+  "name": "Platformer",
+  "parent": "game",
+  "keywords": ["platformer", "platform", "jump", "run and jump", "side-scroller", "metroidvania"],
+  "modelTier": "creative",
+  "maxDepth": 4,
+  "branches": [
+    { "name": "Player Character", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Levels/Worlds", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Enemies", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Movement Mechanics", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Collectibles", "modelTier": "creative", "maxDepth": 2 },
+    { "name": "Power-ups", "modelTier": "creative", "maxDepth": 2 },
+    { "name": "Boss Fights", "modelTier": "creative", "maxDepth": 2 },
+    { "name": "Camera", "modelTier": "structure", "maxDepth": 2 }
+  ]
+}

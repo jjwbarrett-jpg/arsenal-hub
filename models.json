@@ -1,0 +1,23 @@
+{
+  "DeepSeek V4 Pro": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "url": "https://api.deepseek.com/v1/chat/completions",
+    "key_env": "DEEPSEEK_API_KEY",
+    "vision": false
+  },
+  "Gemini Lite (Free)": {
+    "provider": "google",
+    "model": "gemini-1.5-flash",
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+    "key_env": "GEMINI_API_KEY",
+    "vision": true
+  },
+  "GLM 4.6 (Z.AI Free)": {
+    "provider": "zai",
+    "model": "glm-4-flash",
+    "url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    "key_env": "ZAI_API_KEY",
+    "vision": false
+  }
+}

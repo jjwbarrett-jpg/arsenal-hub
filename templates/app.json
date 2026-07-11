@@ -1,0 +1,13 @@
+{
+  "id": "app",
+  "name": "App",
+  "subtypes": ["utility", "social", "productivity", "weather", "fitness"],
+  "universal_branches": [
+    { "name": "Auth", "modelTier": "structure" },
+    { "name": "Data", "modelTier": "structure" },
+    { "name": "UI Screens", "modelTier": "structure" },
+    { "name": "Notifications", "modelTier": "structure" },
+    { "name": "Settings", "modelTier": "structure" }
+  ],
+  "keywords": ["app", "application", "mobile app", "ios", "android"]
+}

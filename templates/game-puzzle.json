@@ -1,0 +1,18 @@
+{
+  "id": "game-puzzle",
+  "name": "Puzzle Game",
+  "parent": "game",
+  "keywords": ["puzzle", "match", "logic", "brain", "tetris", "sudoku", "word game"],
+  "modelTier": "creative",
+  "maxDepth": 4,
+  "branches": [
+    { "name": "Core Mechanics", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Puzzle Types", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Difficulty Curve", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Scoring System", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Hints/Tutorials", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Level Progression", "modelTier": "creative", "maxDepth": 3 },
+    { "name": "Time Limits", "modelTier": "structure", "maxDepth": 2 },
+    { "name": "Daily Challenges", "modelTier": "creative", "maxDepth": 2 }
+  ]
+}
