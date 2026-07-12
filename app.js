@@ -40,14 +40,27 @@
     _mergeSpecialistCards();
   }
 
+  function toolsApiBase() {
+    return window.location.origin.replace(':5000', ':9121');
+  }
+
   // Merge specialistCards into the tools array (append, no duplicate names)
   function _mergeSpecialistCards() {
     const existingNames = new Set(tools.map(t => t.name.toLowerCase()));
     specialistCards.forEach(sc => {
       if (existingNames.has(sc.name.toLowerCase())) {
-        // Update the existing card in-place with specialist data
+        // Update existing card; preserve local UI state (expanded / status toggle)
         const idx = tools.findIndex(t => t.name.toLowerCase() === sc.name.toLowerCase());
-        if (idx !== -1) tools[idx] = { ...tools[idx], ...sc, _specialist: true };
+        if (idx !== -1) {
+          const prev = tools[idx];
+          tools[idx] = {
+            ...prev,
+            ...sc,
+            _specialist: true,
+            expanded: !!prev.expanded,
+            status: prev.status || sc.status || 'active'
+          };
+        }
       } else {
         tools.push({ ...sc, _specialist: true, expanded: false });
         existingNames.add(sc.name.toLowerCase());
@@ -55,10 +68,29 @@
     });
   }
 
+  // Upsert one specialist card into local caches + re-merge
+  function _upsertSpecialistCard(card) {
+    if (!card || !card.name) return;
+    const idx = specialistCards.findIndex(c =>
+      (card.id && c.id === card.id) || c.name.toLowerCase() === card.name.toLowerCase()
+    );
+    if (idx !== -1) specialistCards[idx] = card;
+    else specialistCards.push(card);
+    loadTools();
+    _mergeSpecialistCards();
+    // Restore expanded on the updated tool
+    const t = tools.find(x =>
+      (card.id && x.id === card.id) || x.name.toLowerCase() === card.name.toLowerCase()
+    );
+    if (t) t.expanded = true;
+    updateActiveCount();
+    renderToolFilters();
+    renderToolGrid();
+  }
+
   // Async: fetch specialist cards from server, merge, re-render
   function loadSpecialistCards() {
-    const apiBase = window.location.origin.replace(':5000', ':9121');
-    fetch(apiBase + '/api/tools/specialist')
+    fetch(toolsApiBase() + '/api/tools/specialist')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data || !Array.isArray(data.cards)) return;
@@ -68,6 +100,32 @@
         renderToolGrid();
       })
       .catch(() => { /* server not running — silent */ });
+  }
+
+  function formatRefreshedDate(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric'
+      });
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  function formatPricingLabel(tool) {
+    const model = tool.pricing_model || tool.pricing?.model;
+    const details = tool.pricing_details || tool.pricing?.details;
+    if (!model && !details) return '—';
+    const modelLabel = model
+      ? String(model).charAt(0).toUpperCase() + String(model).slice(1).replace(/-/g, ' ')
+      : '';
+    if (modelLabel && details) return `${modelLabel} · ${details}`;
+    return modelLabel || details || '—';
+  }
+
+  function effectiveToolStatus(tool) {
+    return tool.status_override || tool.status || 'idle';
   }
 
 
@@ -636,35 +694,52 @@
 
     filtered.forEach(tool => {
       const card = document.createElement('div');
-      card.className = 'tool-card' + (tool.expanded ? ' expanded' : '');
+      card.className = 'tool-card' + (tool.expanded ? ' expanded' : '') + (tool._specialist ? ' specialist' : '');
+      if (tool.id) card.dataset.toolId = tool.id;
 
-      const statusClass = tool.status === 'active' ? 'active' : 'idle';
-      const sess = tool.sessions ? `<span class="sessions">${tool.sessions} sessions</span>` : '';
+      const effStatus = effectiveToolStatus(tool);
+      const statusClass = effStatus === 'active' ? 'active' : (effStatus === 'limited' ? 'limited' : (effStatus === 'unavailable' ? 'unavailable' : 'idle'));
+      const sess = tool.sessions
+        ? `<span class="sessions">${tool.sessions} sessions</span>`
+        : (tool.activeSessions != null
+          ? `<span class="sessions">${tool.activeSessions}${tool.maxSessions != null ? '/' + tool.maxSessions : ''} sessions</span>`
+          : '');
       const tagsHtml = (tool.tags || []).map(t => `<span class="tag-pill" data-tag="${t}">${t}</span>`).join('');
 
-      // Specialist badge — shown below tags for auto-populated cards
+      const versionStr = tool.version ? `<span class="tool-version">v${escapeHtml(tool.version)}</span>` : '';
+      const categoryStr = tool.category
+        ? `<span class="tool-category">${escapeHtml(tool.category)}</span>`
+        : '';
+
+      // Specialist badge — collapsed view only
       let specialistBadge = '';
-      if (tool._specialist) {
-        const dateStr = tool.lastUpdated
-          ? new Date(tool.lastUpdated).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-          : '';
+      if (tool._specialist && !tool.expanded) {
+        const dateStr = formatRefreshedDate(tool.last_refreshed || tool.lastUpdated);
         specialistBadge = `<div class="tool-specialist-badge">🤖 Auto-populated${dateStr ? ' · ' + dateStr : ''}</div>`;
       }
 
-      let extra = '';
-      if (tool.expanded && (tool.description || tool.summary)) {
-        extra = `<div class="tool-desc">${escapeHtml(tool.description || tool.summary)}</div>`;
-      }
-
-      const platformUrl = tool.links?.platform;
+      const platformUrl = tool.links?.platform || tool.links?.website || tool.links?.docs;
       const openBtn = platformUrl
         ? `<button class="tool-open-browser" type="button" data-url="${escapeHtml(platformUrl)}" title="Open in browser">↗</button>`
         : '';
 
+      let bodyHtml = '';
+      if (tool.expanded) {
+        bodyHtml = tool._specialist
+          ? renderExpandedToolBody(tool)
+          : (tool.description || tool.summary
+            ? `<div class="tool-card-body"><div class="tool-desc">${escapeHtml(tool.description || tool.summary)}</div></div>`
+            : '');
+      }
+
       card.innerHTML = `
         <div class="tool-header">
-          <div class="tool-name">${escapeHtml(tool.name)}</div>
+          <div class="tool-name-block">
+            <div class="tool-name">${escapeHtml(tool.name)}</div>
+            ${tool.expanded ? `<div class="tool-meta-row">${categoryStr}${versionStr}</div>` : ''}
+          </div>
           <div class="tool-header-actions">
+            ${tool._specialist ? `<button class="tool-refresh-btn" type="button" title="Re-run specialist extraction">↻ Refresh</button>` : ''}
             ${openBtn}
             <div class="status-indicator">
               <div class="status-dot ${statusClass}" title="Click to toggle status"></div>
@@ -674,9 +749,8 @@
         <div class="tool-sessions">${sess}</div>
         <div class="tool-tags">${tagsHtml}</div>
         ${specialistBadge}
-        ${extra}
+        ${bodyHtml}
       `;
-
 
       // Expand / collapse on card (except interactive children)
       card.querySelector('.tool-open-browser')?.addEventListener('click', (e) => {
@@ -684,9 +758,16 @@
         openInBrowser(e.currentTarget.dataset.url);
       });
 
+      card.querySelector('.tool-refresh-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        refreshToolCard(tool);
+      });
+
       card.addEventListener('click', (e) => {
         if (e.target.classList.contains('status-dot') || e.target.classList.contains('tag-pill')) return;
         if (e.target.closest('.tool-open-browser')) return;
+        if (e.target.closest('.tool-refresh-btn')) return;
+        if (e.target.closest('.tool-card-body')) return; // expanded body has its own controls
         tool.expanded = !tool.expanded;
         saveToolsState();
         renderToolGrid();
@@ -694,14 +775,15 @@
 
       // Status dot
       const dot = card.querySelector('.status-dot');
-      dot.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Cycle active <-> idle (per current behavior)
-        tool.status = (tool.status === 'active') ? 'idle' : 'active';
-        saveToolsState();
-        updateActiveCount();
-        renderToolGrid();
-      });
+      if (dot) {
+        dot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          tool.status = (tool.status === 'active') ? 'idle' : 'active';
+          saveToolsState();
+          updateActiveCount();
+          renderToolGrid();
+        });
+      }
 
       // Tag on card applies filter
       card.querySelectorAll('.tag-pill').forEach(pill => {
@@ -713,8 +795,239 @@
         });
       });
 
+      // Expanded body interactions (links, inline edit)
+      if (tool.expanded) {
+        bindExpandedToolBody(card, tool);
+      }
+
       grid.appendChild(card);
     });
+  }
+
+  function renderExpandedToolBody(tool) {
+    const desc = tool.description || tool.summary || '';
+    const caps = (tool.capabilities || tool.features || []).slice(0, 8);
+    const capsHtml = caps.length
+      ? caps.map(c => escapeHtml(String(c))).join(', ')
+      : '—';
+    const pricingLabel = formatPricingLabel(tool);
+    const refreshed = formatRefreshedDate(tool.last_refreshed || tool.lastUpdated) || '—';
+
+    const aliases = Array.isArray(tool.aliases) ? tool.aliases : [];
+    const aliasesDisplay = aliases.length ? aliases.join(', ') : '—';
+    const paths = tool.paths || {};
+    const configPath = paths.config || '—';
+    const binaryPath = paths.binary || '—';
+    const contextNotes = tool.context_notes || '';
+    const customModel = tool.custom_model || '';
+
+    const links = tool.links || {};
+    const linkDefs = [
+      { key: 'docs', label: 'Docs' },
+      { key: 'github', label: 'GitHub' },
+      { key: 'website', label: 'Website' },
+      { key: 'status', label: 'Status' },
+      { key: 'pricing', label: 'Pricing' },
+      { key: 'platform', label: 'Platform' },
+      { key: 'api', label: 'API' }
+    ];
+    const linkHtml = linkDefs
+      .filter(d => links[d.key])
+      .map(d => `<a class="tool-link-chip" href="${escapeHtml(links[d.key])}" target="_blank" rel="noopener noreferrer">${escapeHtml(d.label)} ↗</a>`)
+      .join('');
+
+    return `
+      <div class="tool-card-body">
+        ${desc ? `<div class="tool-desc">${escapeHtml(desc)}</div>` : ''}
+
+        <div class="tool-section tool-section-auto">
+          <div class="tool-section-label">🤖 AUTO-DISCOVERED</div>
+          <div class="tool-section-row"><span class="tool-field-label">Capabilities</span><span class="tool-field-value">${capsHtml}</span></div>
+          <div class="tool-section-row"><span class="tool-field-label">Pricing</span><span class="tool-field-value">${escapeHtml(pricingLabel)}</span></div>
+          <div class="tool-section-row"><span class="tool-field-label">Refreshed</span><span class="tool-field-value tool-refreshed mono">${escapeHtml(refreshed)}</span></div>
+        </div>
+
+        <div class="tool-section tool-section-user">
+          <div class="tool-section-label">✏️ USER NOTES</div>
+          <div class="tool-section-row tool-user-field" data-field="context_notes">
+            <span class="tool-field-label">Context</span>
+            <span class="tool-field-value tool-editable" data-field="context_notes" title="Click to edit">${contextNotes ? escapeHtml(contextNotes) : '<span class="tool-placeholder">Add context note…</span>'}</span>
+          </div>
+          <div class="tool-section-row tool-user-field" data-field="aliases">
+            <span class="tool-field-label">Alias</span>
+            <span class="tool-field-value tool-editable" data-field="aliases" title="Click to edit">${aliases.length ? escapeHtml(aliasesDisplay) : '<span class="tool-placeholder">Add aliases…</span>'}</span>
+          </div>
+          <div class="tool-section-row tool-user-field" data-field="paths.config">
+            <span class="tool-field-label">Config</span>
+            <span class="tool-field-value tool-editable mono" data-field="paths.config" title="Click to edit">${paths.config ? escapeHtml(configPath) : '<span class="tool-placeholder">Set config path…</span>'}</span>
+          </div>
+          <div class="tool-section-row tool-user-field" data-field="paths.binary">
+            <span class="tool-field-label">Binary</span>
+            <span class="tool-field-value tool-editable mono" data-field="paths.binary" title="Click to edit">${paths.binary ? escapeHtml(binaryPath) : '<span class="tool-placeholder">Set binary path…</span>'}</span>
+          </div>
+          <div class="tool-section-row tool-user-field" data-field="custom_model">
+            <span class="tool-field-label">Model</span>
+            <span class="tool-field-value tool-editable" data-field="custom_model" title="Click to edit">${customModel ? escapeHtml(customModel) : '<span class="tool-placeholder">Optional model override…</span>'}</span>
+          </div>
+        </div>
+
+        ${linkHtml ? `<div class="tool-section tool-section-links"><div class="tool-section-label">LINKS</div><div class="tool-links">${linkHtml}</div></div>` : ''}
+      </div>
+    `;
+  }
+
+  function bindExpandedToolBody(card, tool) {
+    card.querySelectorAll('.tool-link-chip').forEach(a => {
+      a.addEventListener('click', e => e.stopPropagation());
+    });
+
+    card.querySelectorAll('.tool-editable').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        beginInlineEdit(el, tool);
+      });
+    });
+  }
+
+  function beginInlineEdit(el, tool) {
+    if (el.querySelector('input, textarea')) return;
+    const field = el.dataset.field;
+    if (!field) return;
+
+    let current = '';
+    if (field === 'aliases') {
+      current = (tool.aliases || []).join(', ');
+    } else if (field.startsWith('paths.')) {
+      const key = field.split('.')[1];
+      current = (tool.paths && tool.paths[key]) || '';
+    } else {
+      current = tool[field] || '';
+    }
+
+    const isMultiline = field === 'context_notes';
+    const input = document.createElement(isMultiline ? 'textarea' : 'input');
+    if (!isMultiline) input.type = 'text';
+    input.className = 'tool-inline-input' + (isMultiline ? ' tool-inline-textarea' : '');
+    input.value = current;
+    if (isMultiline) {
+      input.rows = 3;
+    }
+
+    el.innerHTML = '';
+    el.appendChild(input);
+    input.focus();
+    if (input.select) input.select();
+
+    let saved = false;
+    const commit = () => {
+      if (saved) return;
+      saved = true;
+      const value = input.value.trim();
+      saveUserField(tool, field, value);
+    };
+    const cancel = () => {
+      if (saved) return;
+      saved = true;
+      renderToolGrid();
+    };
+
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && !isMultiline) {
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Enter' && isMultiline && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancel();
+      }
+    });
+    input.addEventListener('click', e => e.stopPropagation());
+    input.addEventListener('blur', () => commit());
+  }
+
+  function saveUserField(tool, field, value) {
+    // Apply locally first for snappy UI
+    if (field === 'aliases') {
+      tool.aliases = value
+        ? value.split(',').map(s => s.trim()).filter(Boolean)
+        : [];
+    } else if (field.startsWith('paths.')) {
+      const key = field.split('.')[1];
+      tool.paths = { ...(tool.paths || {}), [key]: value || null };
+    } else {
+      tool[field] = value || null;
+    }
+
+    // Seed tools from data.js can't PATCH specialist store unless specialist-backed.
+    // Promote to specialist card on first manual save if needed.
+    const payload = {
+      id: tool.id,
+      name: tool.name,
+      aliases: tool.aliases || [],
+      paths: tool.paths || { config: null, binary: null },
+      context_notes: tool.context_notes || null,
+      custom_model: tool.custom_model || null,
+      status_override: tool.status_override || null
+    };
+
+    // Only specialist cards are on the server. If this is a seed tool, create via manual patch fails —
+    // require specialist source. For seed tools with user edits, we PATCH only when _specialist.
+    if (!tool._specialist) {
+      showToast('Manual notes persist on specialist cards — Research this tool first', 4000);
+      renderToolGrid();
+      return;
+    }
+
+    fetch(toolsApiBase() + '/api/tools/specialist', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          showToast('❌ ' + (data.error || 'Save failed'), 4000);
+          return;
+        }
+        _upsertSpecialistCard(data);
+        showToast('Saved user notes', 2000);
+      })
+      .catch(err => {
+        showToast('❌ Network error: ' + err.message, 4000);
+        renderToolGrid();
+      });
+  }
+
+  function refreshToolCard(tool) {
+    if (!tool || !tool._specialist) {
+      showToast('Only specialist cards can be refreshed', 2500);
+      return;
+    }
+    showToast(`Refreshing “${tool.name}”…`, 2500);
+    fetch(toolsApiBase() + '/api/tools/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: tool.id, name: tool.name })
+    })
+      .then(r => r.json().then(data => ({ ok: r.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          showToast('❌ ' + (data.error || 'Refresh failed'), 5000);
+          return;
+        }
+        if (data.status === 'partial') {
+          showToast('⚠️ Extraction incomplete — check server logs', 5000);
+          return;
+        }
+        _upsertSpecialistCard(data);
+        showToast(`✅ “${data.name}” refreshed`, 3000);
+      })
+      .catch(err => {
+        showToast('❌ Network error: ' + err.message, 5000);
+      });
   }
 
   // ===== STATIC TICKER =====
@@ -731,8 +1044,7 @@
     const btn = document.getElementById('ts-research');
     if (btn) { btn.textContent = 'Researching…'; btn.disabled = true; }
 
-    const apiBase = window.location.origin.replace(':5000', ':9121');
-    fetch(apiBase + '/api/tools/ingest', {
+    fetch(toolsApiBase() + '/api/tools/ingest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, url, category })
@@ -747,16 +1059,7 @@
           showToast('⚠️ Extraction incomplete — check server logs', 5000);
           return;
         }
-        // Success: upsert into specialistCards, reload + re-render
-        const idx = specialistCards.findIndex(c => c.name.toLowerCase() === data.name.toLowerCase());
-        if (idx !== -1) specialistCards[idx] = data;
-        else specialistCards.push(data);
-
-        loadTools();           // reloads base tools from window.TOOLS
-        _mergeSpecialistCards(); // re-applies specialist overrides
-        updateActiveCount();
-        renderToolFilters();
-        renderToolGrid();
+        _upsertSpecialistCard(data);
 
         // Clear form inputs
         const nameEl = document.getElementById('ts-name');
@@ -802,9 +1105,9 @@
   function escapeHtml(str) {
     if (!str) return '';
     return String(str)
-      .replace(/&/g, '&')
-      .replace(/</g, '<')
-      .replace(/>/g, '>')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }

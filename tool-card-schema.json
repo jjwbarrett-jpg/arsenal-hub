@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arsenal-hub.local/schemas/tool-card.json",
+  "title": "Tool Card v2",
+  "description": "Registry schema for Arsenal Hub tool cards. Auto-discovered fields are filled by the specialist; user-provided fields are manual overrides. Structured for future Task Distributor consumption.",
+  "type": "object",
+  "required": ["id", "name", "source"],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable slug id, e.g. tool-hermes-agent",
+      "layer": "system"
+    },
+    "name": {
+      "type": "string",
+      "description": "Display name (user-supplied on research, preserved thereafter)",
+      "layer": "system"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["specialist", "manual", "seed"],
+      "description": "Origin of the card",
+      "layer": "system"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "idle", "limited", "unavailable"],
+      "default": "active",
+      "description": "Operational status (UI toggle; may be overridden by status_override)",
+      "layer": "system"
+    },
+    "description": {
+      "type": "string",
+      "description": "2–3 sentence summary of what the tool does",
+      "layer": "auto"
+    },
+    "summary": {
+      "type": "string",
+      "description": "Alias of description for legacy render paths",
+      "layer": "auto"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "Agent Platform",
+        "IDE",
+        "CLI",
+        "API",
+        "SDK",
+        "Google Product",
+        "Infrastructure",
+        "Other"
+      ],
+      "description": "Primary category",
+      "layer": "auto"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "3–5 relevant tags (plus derived API/CLI/GUI tags)",
+      "layer": "auto"
+    },
+    "links": {
+      "type": "object",
+      "description": "External reference URLs",
+      "layer": "auto",
+      "properties": {
+        "docs": { "type": ["string", "null"], "format": "uri" },
+        "github": { "type": ["string", "null"], "format": "uri" },
+        "website": { "type": ["string", "null"], "format": "uri" },
+        "status": { "type": ["string", "null"], "format": "uri", "description": "Status page URL if known" },
+        "pricing": { "type": ["string", "null"], "format": "uri", "description": "Pricing page URL if known" },
+        "platform": { "type": ["string", "null"], "format": "uri", "description": "Legacy open-in-browser URL" }
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Normalized capability labels for Task Distributor matching",
+      "layer": "auto",
+      "examples": [["code-generation", "multi-agent", "cron-jobs"]]
+    },
+    "pricing_model": {
+      "type": ["string", "null"],
+      "enum": ["free", "freemium", "paid", "subscription", "self-hosted", null],
+      "description": "High-level pricing model",
+      "layer": "auto"
+    },
+    "pricing_details": {
+      "type": ["string", "null"],
+      "description": "Brief human-readable pricing notes",
+      "layer": "auto"
+    },
+    "version": {
+      "type": ["string", "null"],
+      "description": "Latest known version string if extractable",
+      "layer": "auto"
+    },
+    "last_refreshed": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of last specialist extraction",
+      "layer": "auto"
+    },
+    "features": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Legacy key_features list; prefer capabilities for matching",
+      "layer": "auto"
+    },
+    "pricing": {
+      "type": "object",
+      "description": "Legacy pricing object { model, details }",
+      "layer": "auto",
+      "properties": {
+        "model": { "type": ["string", "null"] },
+        "details": { "type": ["string", "null"] }
+      }
+    },
+    "lastUpdated": {
+      "type": ["string", "null"],
+      "description": "Legacy alias of last_refreshed",
+      "layer": "auto"
+    },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "User-defined short names / agent identifiers",
+      "layer": "manual"
+    },
+    "paths": {
+      "type": "object",
+      "description": "Local filesystem paths for this install",
+      "layer": "manual",
+      "properties": {
+        "config": { "type": ["string", "null"] },
+        "binary": { "type": ["string", "null"] }
+      },
+      "additionalProperties": { "type": ["string", "null"] }
+    },
+    "context_notes": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "When/how to use this tool in the user's stack",
+      "layer": "manual"
+    },
+    "custom_model": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Preferred model override for this tool if applicable",
+      "layer": "manual"
+    },
+    "status_override": {
+      "type": ["string", "null"],
+      "enum": ["active", "idle", "limited", "unavailable", null],
+      "default": null,
+      "description": "Manual status pin; null means use status field",
+      "layer": "manual"
+    }
+  },
+  "x-layers": {
+    "auto": [
+      "description",
+      "summary",
+      "category",
+      "tags",
+      "links",
+      "capabilities",
+      "pricing_model",
+      "pricing_details",
+      "version",
+      "last_refreshed",
+      "features",
+      "pricing",
+      "lastUpdated"
+    ],
+    "manual": [
+      "aliases",
+      "paths",
+      "context_notes",
+      "custom_model",
+      "status_override"
+    ],
+    "system": ["id", "name", "source", "status"]
+  },
+  "x-user-defaults": {
+    "aliases": [],
+    "paths": { "config": null, "binary": null },
+    "context_notes": null,
+    "custom_model": null,
+    "status_override": null
+  },
+  "x-phase-2-rag": {
+    "status": "spec-only",
+    "description": "Once cards are stable, specialist ingests each tool's docs into a local vector store. Hub Chat queries the KB with source links. Separate build — do not implement in v2."
+  }
+}

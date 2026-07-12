@@ -47,12 +47,27 @@ _hub_state = {}
 CLIPBOARD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".files", "clipboard-session.json")
 
 # --- Specialist cards storage (auto-populated tool cards) ---
-SPECIALIST_CARDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".files", "tools", "specialist-cards.json")
+_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+TOOLS_DIR = os.path.join(_REPO_ROOT, ".files", "tools")
+SPECIALIST_CARDS_FILE = os.path.join(TOOLS_DIR, "specialist-cards.json")
+# Schema: committed at repo root; runtime mirror under .files/tools/
+TOOL_CARD_SCHEMA_REPO = os.path.join(_REPO_ROOT, "tool-card-schema.json")
+TOOL_CARD_SCHEMA_FILE = os.path.join(TOOLS_DIR, "schema.json")
 
 # Gemini-lite config for tool extraction (same as chainlit_app.py Scribe usage)
 GEMINI_EXTRACT_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 GEMINI_KEY_ENV = "GEMINI_API_KEY"
 GEMINI_KEY_ENV_FALLBACK = "GOOGLE_API_KEY"
+
+# Manual (user-provided) fields — preserved across specialist re-extract / refresh
+USER_CARD_FIELDS = ("aliases", "paths", "context_notes", "custom_model", "status_override")
+USER_FIELD_DEFAULTS = {
+    "aliases": [],
+    "paths": {"config": None, "binary": None},
+    "context_notes": None,
+    "custom_model": None,
+    "status_override": None,
+}
 
 TOOL_EXTRACT_PROMPT = """You are a tool researcher. Extract structured information from this documentation page.
 
@@ -62,15 +77,19 @@ Return ONLY valid JSON with these exact fields (no markdown fences, no extra tex
   "description": "<2-3 sentence description of what it does>",
   "category": "<best fit: Agent Platform | IDE | CLI | API | SDK | Google Product | Infrastructure | Other>",
   "tags": ["<3-5 relevant tags>"],
+  "capabilities": ["<normalized capability labels, e.g. code-generation, multi-agent, cron-jobs, web-search>"],
   "pricing_model": "<free | freemium | paid | subscription | self-hosted>",
   "pricing_details": "<brief pricing info or null>",
+  "version": "<latest version string if found or null>",
   "has_api": <true|false>,
   "has_cli": <true|false>,
   "has_gui": <true|false>,
   "key_features": ["<3-6 key features>"],
   "docs_url": "<best documentation link or null>",
   "github_url": "<GitHub URL if found or null>",
-  "website_url": "<homepage URL if found or null>"
+  "website_url": "<homepage URL if found or null>",
+  "status_url": "<status page URL if found or null>",
+  "pricing_url": "<pricing page URL if found or null>"
 }
 
 Page content:
@@ -190,10 +209,10 @@ def _load_specialist_cards():
     """Load specialist-populated tool cards from JSON file. Returns [] on miss/corrupt."""
     try:
         if os.path.exists(SPECIALIST_CARDS_FILE):
-            with open(SPECIALIST_CARDS_FILE, 'r') as f:
+            with open(SPECIALIST_CARDS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             if isinstance(data, list):
-                return data
+                return [_normalize_tool_card(c) for c in data if isinstance(c, dict)]
     except (json.JSONDecodeError, IOError):
         pass
     return []
@@ -203,11 +222,235 @@ def _save_specialist_cards(cards):
     """Persist specialist cards list to JSON file."""
     try:
         os.makedirs(os.path.dirname(SPECIALIST_CARDS_FILE), exist_ok=True)
-        with open(SPECIALIST_CARDS_FILE, 'w') as f:
+        with open(SPECIALIST_CARDS_FILE, 'w', encoding='utf-8') as f:
             json.dump(cards, f, indent=2)
         return True
     except IOError:
         return False
+
+
+def _load_tool_card_schema():
+    """Load tool card JSON schema from .files mirror or committed repo root. Returns {} on miss."""
+    for path in (TOOL_CARD_SCHEMA_FILE, TOOL_CARD_SCHEMA_REPO):
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    # Keep runtime mirror in sync when reading from repo root
+                    if path == TOOL_CARD_SCHEMA_REPO and not os.path.exists(TOOL_CARD_SCHEMA_FILE):
+                        try:
+                            os.makedirs(TOOLS_DIR, exist_ok=True)
+                            with open(TOOL_CARD_SCHEMA_FILE, 'w', encoding='utf-8') as out:
+                                json.dump(data, out, indent=2)
+                        except IOError:
+                            pass
+                    return data
+        except (json.JSONDecodeError, IOError):
+            continue
+    return {}
+
+
+def _user_fields_from_card(card):
+    """Extract manual/user-provided fields from an existing card (with defaults)."""
+    if not isinstance(card, dict):
+        return dict(USER_FIELD_DEFAULTS)
+    paths = card.get('paths') if isinstance(card.get('paths'), dict) else {}
+    return {
+        'aliases': list(card.get('aliases') or []),
+        'paths': {
+            'config': paths.get('config'),
+            'binary': paths.get('binary'),
+            **{k: v for k, v in paths.items() if k not in ('config', 'binary')},
+        },
+        'context_notes': card.get('context_notes'),
+        'custom_model': card.get('custom_model'),
+        'status_override': card.get('status_override'),
+    }
+
+
+def _normalize_tool_card(card):
+    """Ensure a card has v2 auto + manual fields (backward compatible with v1 cards)."""
+    if not isinstance(card, dict):
+        return card
+    out = dict(card)
+    # Auto layer defaults
+    if 'capabilities' not in out:
+        # Prefer features if present, else empty
+        feats = out.get('features') or []
+        out['capabilities'] = list(feats) if isinstance(feats, list) else []
+    if 'pricing_model' not in out:
+        pricing = out.get('pricing') if isinstance(out.get('pricing'), dict) else {}
+        out['pricing_model'] = pricing.get('model')
+    if 'pricing_details' not in out:
+        pricing = out.get('pricing') if isinstance(out.get('pricing'), dict) else {}
+        out['pricing_details'] = pricing.get('details')
+    if 'version' not in out:
+        out['version'] = None
+    if 'last_refreshed' not in out:
+        out['last_refreshed'] = out.get('lastUpdated')
+    if 'lastUpdated' not in out and out.get('last_refreshed'):
+        out['lastUpdated'] = out['last_refreshed']
+    # Links shape
+    links = out.get('links') if isinstance(out.get('links'), dict) else {}
+    for key in ('docs', 'github', 'website', 'status', 'pricing'):
+        links.setdefault(key, links.get(key))
+    out['links'] = links
+    # Manual layer defaults
+    user = _user_fields_from_card(out)
+    for k, v in user.items():
+        if k not in out or out[k] is None and v is not None and k == 'paths':
+            out[k] = v
+        elif k not in out:
+            out[k] = v
+    if not isinstance(out.get('aliases'), list):
+        out['aliases'] = []
+    if not isinstance(out.get('paths'), dict):
+        out['paths'] = dict(USER_FIELD_DEFAULTS['paths'])
+    if 'summary' not in out and out.get('description'):
+        out['summary'] = out['description']
+    if 'source' not in out:
+        out['source'] = 'specialist'
+    return out
+
+
+def _find_card_index(cards, name=None, card_id=None):
+    """Find card index by id or name (case-insensitive). Returns -1 if missing."""
+    if card_id:
+        for i, c in enumerate(cards):
+            if c.get('id') == card_id:
+                return i
+    if name:
+        name_lower = name.lower()
+        for i, c in enumerate(cards):
+            if c.get('name', '').lower() == name_lower:
+                return i
+            aliases = c.get('aliases') or []
+            if any(isinstance(a, str) and a.lower() == name_lower for a in aliases):
+                return i
+    return -1
+
+
+def _fetch_url_plain_text(url_str):
+    """Fetch a URL and return stripped plain text. Raises on network failure."""
+    import urllib.request as _ur
+    fetch_req = _ur.Request(url_str)
+    fetch_req.add_header('User-Agent', 'ArsenalHub/1.0 (Tool Card Specialist)')
+    with _ur.urlopen(fetch_req, timeout=15) as resp:
+        raw_bytes = resp.read()
+    try:
+        raw_html = raw_bytes.decode('utf-8', errors='replace')
+    except Exception:
+        raw_html = raw_bytes.decode('latin-1', errors='replace')
+    plain = re.sub(r'<[^>]+>', ' ', raw_html)
+    plain = re.sub(r'[ \t]{2,}', ' ', plain)
+    plain = re.sub(r'\n{3,}', '\n\n', plain).strip()
+    return plain
+
+
+def _build_tool_card(name, url_str, extracted, user_category='', existing=None):
+    """Build a full v2 Tool Card from extraction + preserved user fields."""
+    tool_id = (existing or {}).get('id') or ('tool-' + re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-'))
+    now_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+    model_tags = extracted.get('tags') or []
+    feature_tags = []
+    if extracted.get('has_api'):
+        feature_tags.append('API')
+    if extracted.get('has_cli'):
+        feature_tags.append('CLI')
+    if extracted.get('has_gui'):
+        feature_tags.append('GUI')
+    final_tags = list(dict.fromkeys(list(model_tags) + feature_tags))
+
+    capabilities = extracted.get('capabilities') or extracted.get('key_features') or []
+    if not isinstance(capabilities, list):
+        capabilities = []
+
+    pricing_model = extracted.get('pricing_model')
+    pricing_details = extracted.get('pricing_details')
+    pricing = {}
+    if pricing_model:
+        pricing['model'] = pricing_model
+    if pricing_details:
+        pricing['details'] = pricing_details
+
+    links = {}
+    if extracted.get('docs_url'):
+        links['docs'] = extracted['docs_url']
+    if extracted.get('github_url'):
+        links['github'] = extracted['github_url']
+    if extracted.get('website_url'):
+        links['website'] = extracted['website_url']
+    if extracted.get('status_url'):
+        links['status'] = extracted['status_url']
+    if extracted.get('pricing_url'):
+        links['pricing'] = extracted['pricing_url']
+    # Ensure the researched URL is retained as docs if nothing better
+    if url_str and url_str not in links.values():
+        links.setdefault('docs', url_str)
+    # Complete link keys for schema shape
+    for key in ('docs', 'github', 'website', 'status', 'pricing'):
+        links.setdefault(key, None)
+
+    description = extracted.get('description') or ''
+    user = _user_fields_from_card(existing)
+
+    card = {
+        'id': tool_id,
+        'name': name,  # always use caller-supplied name
+        'category': user_category or extracted.get('category') or (existing or {}).get('category') or 'Other',
+        'tags': final_tags,
+        'status': (existing or {}).get('status') or 'active',
+        'description': description,
+        'summary': description,
+        'links': links,
+        'capabilities': capabilities,
+        'pricing_model': pricing_model,
+        'pricing_details': pricing_details,
+        'version': extracted.get('version'),
+        'last_refreshed': now_iso,
+        'lastUpdated': now_iso,  # legacy alias
+        'pricing': pricing,
+        'features': extracted.get('key_features') or list(capabilities),
+        'peak_hours': (existing or {}).get('peak_hours'),
+        'source': 'specialist',
+        # Manual layer (preserved)
+        'aliases': user['aliases'],
+        'paths': user['paths'],
+        'context_notes': user['context_notes'],
+        'custom_model': user['custom_model'],
+        'status_override': user['status_override'],
+    }
+    return _normalize_tool_card(card)
+
+
+def _extract_tool_from_url(url_str):
+    """Fetch docs URL and run Gemini extraction. Returns (extracted_dict | None, error_dict | None)."""
+    try:
+        plain = _fetch_url_plain_text(url_str)
+    except Exception as e:
+        return None, {'error': f'Could not fetch documentation: {str(e)}', 'status': 422}
+
+    extracted = None
+    raw_text_fallback = None
+    for _attempt in range(2):
+        try:
+            extracted = _call_gemini_extract(plain)
+            break
+        except json.JSONDecodeError as jde:
+            raw_text_fallback = str(jde)
+        except Exception as e:
+            return None, {'error': f'Gemini extraction failed: {str(e)}', 'status': 502}
+
+    if extracted is None:
+        return None, {
+            'status': 'partial',
+            'message': 'Could not parse structured data from model response',
+            'raw_text': raw_text_fallback or '',
+            'http_status': 200,
+        }
+    return extracted, None
 
 
 def _call_gemini_extract(content):
@@ -610,6 +853,12 @@ class KanbanHandler(BaseHTTPRequestHandler):
             cards = _load_specialist_cards()
             return self._send_json({'cards': cards, 'count': len(cards)})
 
+        if path == '/api/tools/schema':
+            schema = _load_tool_card_schema()
+            if not schema:
+                return self._send_json({'error': 'Schema not found'}, 404)
+            return self._send_json(schema)
+
         if path == '/api/skills':
             try:
                 categories = _list_skills()
@@ -852,7 +1101,7 @@ class KanbanHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send_json({"error": str(e)}, 502)
 
-        # --- Tool Card Specialist Ingest ---
+        # --- Tool Card Specialist Ingest (v2 auto-discovered fields) ---
         if path == '/api/tools/ingest':
             content_len = int(self.headers.get('Content-Length', 0))
             body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
@@ -864,100 +1113,78 @@ class KanbanHandler(BaseHTTPRequestHandler):
             if not name or not url_str:
                 return self._send_json({'error': 'name and url are required'}, 400)
 
-            # 1. Fetch the URL
-            import urllib.request as _ur
-            try:
-                fetch_req = _ur.Request(url_str)
-                fetch_req.add_header('User-Agent', 'ArsenalHub/1.0 (Tool Card Specialist)')
-                with _ur.urlopen(fetch_req, timeout=15) as resp:
-                    raw_bytes = resp.read()
-                try:
-                    raw_html = raw_bytes.decode('utf-8', errors='replace')
-                except Exception:
-                    raw_html = raw_bytes.decode('latin-1', errors='replace')
-            except Exception as e:
-                return self._send_json({'error': f'Could not fetch documentation: {str(e)}'}, 422)
+            extracted, err = _extract_tool_from_url(url_str)
+            if err:
+                if err.get('status') == 'partial':
+                    return self._send_json({
+                        'status': 'partial',
+                        'message': err.get('message'),
+                        'raw_text': err.get('raw_text', ''),
+                    })
+                return self._send_json({'error': err['error']}, err.get('status', 500))
 
-            # 2. Strip HTML tags → plain text
-            plain = re.sub(r'<[^>]+>', ' ', raw_html)
-            plain = re.sub(r'[ \t]{2,}', ' ', plain)
-            plain = re.sub(r'\n{3,}', '\n\n', plain).strip()
-
-            # 3. Call Gemini-lite with extraction prompt
-            extracted = None
-            raw_text_fallback = None
-            for attempt in range(2):
-                try:
-                    extracted = _call_gemini_extract(plain)
-                    break
-                except json.JSONDecodeError as jde:
-                    raw_text_fallback = str(jde)
-                except Exception as e:
-                    return self._send_json({'error': f'Gemini extraction failed: {str(e)}'}, 502)
-
-            if extracted is None:
-                # Both attempts failed — return raw text for manual review
-                return self._send_json({
-                    'status': 'partial',
-                    'message': 'Could not parse structured data from model response',
-                    'raw_text': raw_text_fallback or ''
-                })
-
-            # 4. Build the full Tool Card
-            tool_id = 'tool-' + re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
-            now_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-
-            # Build tags list from model output
-            model_tags = extracted.get('tags') or []
-            feature_tags = []
-            if extracted.get('has_api'): feature_tags.append('API')
-            if extracted.get('has_cli'): feature_tags.append('CLI')
-            if extracted.get('has_gui'): feature_tags.append('GUI')
-            final_tags = list(dict.fromkeys(model_tags + feature_tags))  # dedupe, preserve order
-
-            pricing = {}
-            if extracted.get('pricing_model'):
-                pricing['model'] = extracted['pricing_model']
-            if extracted.get('pricing_details'):
-                pricing['details'] = extracted['pricing_details']
-
-            links = {}
-            if extracted.get('docs_url'):    links['docs']    = extracted['docs_url']
-            if extracted.get('github_url'):  links['github']  = extracted['github_url']
-            if extracted.get('website_url'): links['website'] = extracted['website_url']
-            if url_str not in links.values(): links.setdefault('docs', url_str)
-
-            card = {
-                'id': tool_id,
-                'name': name,  # always use user-supplied name
-                'category': user_category or extracted.get('category', 'Other'),
-                'tags': final_tags,
-                'status': 'active',
-                'description': extracted.get('description', ''),
-                'summary': extracted.get('description', ''),  # alias for renderToolGrid
-                'pricing': pricing,
-                'peak_hours': None,
-                'links': links,
-                'features': extracted.get('key_features', []),
-                'lastUpdated': now_iso,
-                'source': 'specialist'
-            }
-
-            # 5. Upsert into specialist-cards.json (match by name, case-insensitive)
             cards = _load_specialist_cards()
-            name_lower = name.lower()
-            replaced = False
-            for i, c in enumerate(cards):
-                if c.get('name', '').lower() == name_lower:
-                    cards[i] = card
-                    replaced = True
-                    break
-            if not replaced:
+            idx = _find_card_index(cards, name=name)
+            existing = cards[idx] if idx >= 0 else None
+            card = _build_tool_card(name, url_str, extracted, user_category=user_category, existing=existing)
+
+            if idx >= 0:
+                cards[idx] = card
+            else:
                 cards.append(card)
             _save_specialist_cards(cards)
 
-            print(f'[specialist] {"Updated" if replaced else "Added"} card: {name}')
+            print(f'[specialist] {"Updated" if idx >= 0 else "Added"} card: {name}')
             return self._send_json(card, 201)
+
+        # --- Tool Card Refresh (re-extract auto fields, preserve manual) ---
+        if path == '/api/tools/refresh':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+
+            name = (body.get('name') or '').strip()
+            card_id = (body.get('id') or '').strip()
+            url_override = (body.get('url') or '').strip()
+
+            if not name and not card_id:
+                return self._send_json({'error': 'name or id is required'}, 400)
+
+            cards = _load_specialist_cards()
+            idx = _find_card_index(cards, name=name or None, card_id=card_id or None)
+            if idx < 0:
+                return self._send_json({'error': 'Card not found'}, 404)
+
+            existing = cards[idx]
+            links = existing.get('links') if isinstance(existing.get('links'), dict) else {}
+            url_str = url_override or links.get('docs') or links.get('website') or links.get('github') or ''
+            if not url_str:
+                return self._send_json({
+                    'error': 'No docs/website URL on card — pass url in body to refresh'
+                }, 400)
+
+            extracted, err = _extract_tool_from_url(url_str)
+            if err:
+                if err.get('status') == 'partial':
+                    return self._send_json({
+                        'status': 'partial',
+                        'message': err.get('message'),
+                        'raw_text': err.get('raw_text', ''),
+                    })
+                return self._send_json({'error': err['error']}, err.get('status', 500))
+
+            card_name = existing.get('name') or name
+            card = _build_tool_card(
+                card_name,
+                url_str,
+                extracted,
+                user_category=existing.get('category') or '',
+                existing=existing,
+            )
+            cards[idx] = card
+            _save_specialist_cards(cards)
+
+            print(f'[specialist] Refreshed card: {card_name} @ {card.get("last_refreshed")}')
+            return self._send_json(card)
 
         if path == '/api/tasks':
             content_len = int(self.headers.get('Content-Length', 0))
@@ -1003,6 +1230,59 @@ class KanbanHandler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip('/')
+
+        # --- Tool Card manual fields (user notes) ---
+        # PATCH /api/tools/specialist  body: { id|name, aliases, paths, context_notes, custom_model, status_override }
+        # PATCH /api/tools/specialist/{id}
+        if path == '/api/tools/specialist' or path.startswith('/api/tools/specialist/'):
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+
+            card_id = ''
+            if path.startswith('/api/tools/specialist/'):
+                card_id = path.split('/api/tools/specialist/', 1)[1].strip()
+            card_id = (body.get('id') or card_id or '').strip()
+            name = (body.get('name') or '').strip()
+
+            if not card_id and not name:
+                return self._send_json({'error': 'id or name is required'}, 400)
+
+            cards = _load_specialist_cards()
+            idx = _find_card_index(cards, name=name or None, card_id=card_id or None)
+            if idx < 0:
+                return self._send_json({'error': 'Card not found'}, 404)
+
+            card = dict(cards[idx])
+
+            if 'aliases' in body:
+                aliases = body['aliases']
+                if isinstance(aliases, str):
+                    aliases = [a.strip() for a in aliases.split(',') if a.strip()]
+                if not isinstance(aliases, list):
+                    return self._send_json({'error': 'aliases must be a list or comma-separated string'}, 400)
+                card['aliases'] = [str(a).strip() for a in aliases if str(a).strip()]
+
+            if 'paths' in body:
+                paths = body['paths']
+                if not isinstance(paths, dict):
+                    return self._send_json({'error': 'paths must be an object'}, 400)
+                merged_paths = dict(card.get('paths') or {})
+                for k, v in paths.items():
+                    merged_paths[k] = v if v not in ('',) else None
+                card['paths'] = merged_paths
+
+            for field in ('context_notes', 'custom_model', 'status_override'):
+                if field in body:
+                    val = body[field]
+                    card[field] = val if val not in ('',) else None
+
+            # Optional: allow status pin via status_override only (auto fields not writable here)
+            card = _normalize_tool_card(card)
+            cards[idx] = card
+            _save_specialist_cards(cards)
+
+            print(f'[specialist] Manual update: {card.get("name")}')
+            return self._send_json(card)
 
         if path.startswith('/api/tasks/'):
             task_id = path.split('/api/tasks/')[1]
