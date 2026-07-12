@@ -11,6 +11,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@excalidraw/excalidraw@0.17.3/dist/excalidraw.production.min.js"></script>
+  <script src="https://unpkg.com/cytoscape@3.29.2/dist/cytoscape.min.js"></script>
 </head>
 <body>
   <!-- Browser chrome (visible when Hub is the active browser page in Electron) -->
@@ -49,6 +50,7 @@
     <button class="tab-btn" data-tab="kanban">KANBAN</button>
     <button class="tab-btn" data-tab="tools">TOOLS</button>
     <button class="tab-btn" data-tab="blueprints">BLUEPRINTS</button>
+    <button class="tab-btn" id="tab-btn-taskmap" data-tab="taskmap">TASK MAP</button>
   </div>
 
   <!-- TAB CONTENT -->
@@ -313,6 +315,40 @@
 
   </div>
 
+    <!-- ===== TAB: TASK MAP ===== -->
+    <div class="tab-pane" id="pane-taskmap">
+      <!-- Header row -->
+      <div class="taskmap-header">
+        <div class="taskmap-header-left">
+          <span id="taskmap-breadcrumb">TASK MAP</span>
+          <button class="taskmap-back-btn" id="taskmap-back" hidden>← Back</button>
+        </div>
+        <div class="taskmap-header-right">
+          <button class="btn-small" id="taskmap-refresh" title="Refresh">↻</button>
+        </div>
+      </div>
+
+      <!-- Body: L1 grid or L2 graph -->
+      <div class="taskmap-body">
+        <!-- Layer 1: project grid -->
+        <div id="taskmap-projects"></div>
+        <!-- Layer 2: Cytoscape canvas -->
+        <div id="taskmap-graph" hidden></div>
+      </div>
+
+      <!-- Unassigned pool strip (shown in Layer 2) -->
+      <div id="taskmap-unassigned" hidden></div>
+
+      <!-- Tool Card side panel -->
+      <div class="taskmap-drawer" id="taskmap-drawer" hidden>
+        <div class="taskmap-drawer-header">
+          <span id="taskmap-drawer-title">Agent</span>
+          <button class="taskmap-drawer-close" id="taskmap-drawer-close" aria-label="Close">×</button>
+        </div>
+        <div class="taskmap-drawer-body" id="taskmap-drawer-body"></div>
+      </div>
+    </div>
+
   <!-- Slide-out chat panel (right side) -->
   <div class="chat-slideout" id="chat-slideout" hidden>
     <!-- Drag-resize handle on left edge -->
@@ -394,6 +430,7 @@
   <script src="clipboard.js"></script>
   <script src="clipboard-session.js"></script>
   <script src="tab-agents.js"></script>
+  <script src="taskmap.js"></script>
   <script>
     // Chat iframes target the same host the Hub is served from — works from Windows/LAN,
     // and survives WSL2 IP changes on reboot (no more hardcoded 127.0.0.1).

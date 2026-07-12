@@ -953,6 +953,199 @@ class KanbanHandler(BaseHTTPRequestHandler):
             conn.close()
             return self._send_json({"error": "Task not found"}, 404)
 
+        if path == '/api/taskmap':
+            project = params.get('project', [None])[0]
+
+            # ── Layer 1: project overview ──────────────────────────────
+            all_boards = list_kanban_boards()
+            projects_out = []
+            for board_name in all_boards:
+                try:
+                    conn_b = get_db()
+                    ensure_schema(conn_b)
+                    has_board_col = 'board' in {r[1] for r in conn_b.execute("PRAGMA table_info(tasks)").fetchall()}
+                    status_ph = ','.join('?' for _ in ACTIVE_STATUSES)
+
+                    if has_board_col and board_name != 'default':
+                        rows = conn_b.execute(
+                            f"SELECT status FROM tasks WHERE board = ? AND status IN ({status_ph})",
+                            (board_name, *ACTIVE_STATUSES)
+                        ).fetchall()
+                    elif board_name == 'default':
+                        rows = conn_b.execute(
+                            f"SELECT status FROM tasks WHERE (board = 'default' OR board IS NULL) AND status IN ({status_ph})",
+                            ACTIVE_STATUSES
+                        ).fetchall()
+                    else:
+                        rows = []
+                    conn_b.close()
+
+                    if not rows:
+                        # Try per-board DB
+                        try:
+                            conn_b2 = get_db(board_name)
+                            ensure_schema(conn_b2)
+                            rows = conn_b2.execute(
+                                f"SELECT status FROM tasks WHERE status IN ({status_ph})",
+                                ACTIVE_STATUSES
+                            ).fetchall()
+                            conn_b2.close()
+                        except Exception:
+                            rows = []
+
+                    statuses = [r['status'] for r in rows]
+
+                    # Filter: skip default board unless it has in_progress tasks
+                    if board_name == 'default' and 'in_progress' not in statuses:
+                        continue
+
+                    projects_out.append({
+                        'name': board_name,
+                        'active': len(statuses),
+                        'statuses': statuses,
+                    })
+                except Exception:
+                    continue
+
+            result = {'projects': projects_out}
+
+            # ── Layer 2: per-project agent graph ───────────────────────
+            if project:
+                # Load specialist cards for enrichment
+                cards = _load_specialist_cards()
+                card_agents = {}
+                for card in cards:
+                    card_agents[card.get('name', '').lower()] = card
+                    for alias in (card.get('aliases') or []):
+                        if alias:
+                            card_agents[alias.lower()] = card
+
+                def _find_card_for_assignee(slug):
+                    """Substring match: card name or alias ⊆ slug (case-insensitive)."""
+                    slug_l = slug.lower()
+                    for key, card in card_agents.items():
+                        if key in slug_l or slug_l in key:
+                            return card
+                    return None
+
+                # Query tasks for this project
+                try:
+                    conn_p = get_db()
+                    ensure_schema(conn_p)
+                    has_bc = 'board' in {r[1] for r in conn_p.execute("PRAGMA table_info(tasks)").fetchall()}
+
+                    if has_bc and project != 'default':
+                        ip_rows = conn_p.execute(
+                            "SELECT id, title, assignee, status FROM tasks "
+                            "WHERE board = ? AND status = 'in_progress'",
+                            (project,)
+                        ).fetchall()
+                        ready_rows = conn_p.execute(
+                            "SELECT id, title FROM tasks WHERE board = ? "
+                            "AND status = 'ready' AND (assignee IS NULL OR assignee = '')",
+                            (project,)
+                        ).fetchall()
+                    elif project == 'default':
+                        ip_rows = conn_p.execute(
+                            "SELECT id, title, assignee, status FROM tasks "
+                            "WHERE (board = 'default' OR board IS NULL) AND status = 'in_progress'"
+                        ).fetchall()
+                        ready_rows = conn_p.execute(
+                            "SELECT id, title FROM tasks "
+                            "WHERE (board = 'default' OR board IS NULL) "
+                            "AND status = 'ready' AND (assignee IS NULL OR assignee = '')"
+                        ).fetchall()
+                    else:
+                        ip_rows = []
+                        ready_rows = []
+                    conn_p.close()
+
+                    # Fall back to per-board DB if nothing found
+                    if not ip_rows and not ready_rows and project != 'default':
+                        try:
+                            conn_p2 = get_db(project)
+                            ensure_schema(conn_p2)
+                            ip_rows = conn_p2.execute(
+                                "SELECT id, title, assignee, status FROM tasks "
+                                "WHERE status = 'in_progress'"
+                            ).fetchall()
+                            ready_rows = conn_p2.execute(
+                                "SELECT id, title FROM tasks "
+                                "WHERE status = 'ready' AND (assignee IS NULL OR assignee = '')"
+                            ).fetchall()
+                            conn_p2.close()
+                        except Exception:
+                            pass
+                except Exception:
+                    ip_rows = []
+                    ready_rows = []
+
+                # Build agent node map: card agents + synthetic from assignees
+                agent_map = {}   # agent_id -> dict
+
+                # Prime from specialist cards (all cards, even unassigned)
+                for name_l, card in {c.get('id', c.get('name', '')): c for c in cards}.items():
+                    card_id = card.get('id') or re.sub(r'[^a-z0-9]+', '-', card.get('name', '').lower()).strip('-')
+                    if card_id not in agent_map:
+                        agent_map[card_id] = {
+                            'id': card_id,
+                            'name': card.get('name', card_id),
+                            'status': card.get('status_override') or card.get('status', 'idle'),
+                            'capabilities': card.get('capabilities', []),
+                            'category': card.get('category', ''),
+                            'description': card.get('description', ''),
+                            'links': card.get('links', {}),
+                            'aliases': card.get('aliases', []),
+                        }
+
+                # Add synthetic agents from assignees not already covered
+                assignee_to_agent_id = {}
+                for row in ip_rows:
+                    assignee = (row['assignee'] or '').strip()
+                    if not assignee:
+                        continue
+                    card = _find_card_for_assignee(assignee)
+                    if card:
+                        card_id = card.get('id') or re.sub(r'[^a-z0-9]+', '-', card.get('name', '').lower()).strip('-')
+                        assignee_to_agent_id[assignee] = card_id
+                    else:
+                        synth_id = 'agent-' + re.sub(r'[^a-z0-9]+', '-', assignee.lower()).strip('-')
+                        assignee_to_agent_id[assignee] = synth_id
+                        if synth_id not in agent_map:
+                            agent_map[synth_id] = {
+                                'id': synth_id,
+                                'name': assignee,
+                                'status': 'active',
+                                'capabilities': [],
+                                'category': '',
+                                'description': '',
+                                'links': {},
+                                'aliases': [],
+                            }
+
+                # Build edges
+                edges_out = []
+                for row in ip_rows:
+                    assignee = (row['assignee'] or '').strip()
+                    if not assignee:
+                        continue
+                    edges_out.append({
+                        'from': None,
+                        'to': assignee,
+                        'task': row['title'],
+                        'task_id': row['id'],
+                        'status': row['status'],
+                    })
+
+                result['agents'] = list(agent_map.values())
+                result['edges'] = edges_out
+                result['unassigned'] = [
+                    {'id': r['id'], 'title': r['title'], 'status': 'ready'}
+                    for r in ready_rows
+                ]
+
+            return self._send_json(result)
+
         return self._send_json({"error": "Not found"}, 404)
 
     def do_POST(self):

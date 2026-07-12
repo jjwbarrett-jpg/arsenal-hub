@@ -164,7 +164,7 @@
     if (slideout) slideout.hidden = true;
 
     const hash = (location.hash || '').replace(/^#/, '');
-    const validTabs = ['clipboard-session', 'workflow', 'kanban', 'tools', 'blueprints'];
+    const validTabs = ['clipboard-session', 'workflow', 'kanban', 'tools', 'blueprints', 'taskmap'];
     const initialTab = validTabs.includes(hash) ? hash : 'workflow';
 
     if (initialTab !== 'chat') {
@@ -243,6 +243,12 @@
     }
     if (target === 'blueprints' && window.BlueprintsTab) {
       BlueprintsTab.render();
+    }
+    if (target === 'taskmap' && window.TaskMap) {
+      window.TaskMap.init();
+    }
+    if (target !== 'taskmap' && window.TaskMap) {
+      window.TaskMap.pause();
     }
 
     if (IS_ELECTRON && target !== 'chat') {

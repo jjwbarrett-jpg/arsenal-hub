@@ -3151,3 +3151,443 @@ body.electron-browser-panel .chat-slideout {
 }
 
 
+/* ===== TASK MAP ===== */
+
+/* ── Pane layout ─────────────────────────────────────────────── */
+#pane-taskmap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Header ──────────────────────────────────────────────────── */
+.taskmap-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  gap: 10px;
+  background: var(--bg-base);
+}
+
+.taskmap-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.taskmap-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.taskmap-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+.taskmap-back-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-mid);
+  background: var(--bg-card);
+}
+
+/* ── Body (fills remaining height) ──────────────────────────── */
+.taskmap-body {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Layer 1: Project grid ───────────────────────────────────── */
+#taskmap-projects {
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.taskmap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px;
+  max-width: 1100px;
+}
+
+.taskmap-project-card {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  cursor: pointer;
+  transition: transform var(--transition-smooth), border-color var(--transition-smooth), box-shadow var(--transition-smooth), background var(--transition-smooth);
+  overflow: hidden;
+  position: relative;
+}
+.taskmap-project-card::before {
+  content: '';
+  width: 4px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  transition: background var(--transition-smooth);
+}
+.taskmap-project-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-mid);
+  box-shadow: var(--shadow-md);
+  background: var(--bg-elevated);
+}
+.taskmap-project-card:active { transform: translateY(0); }
+
+/* Accent colours via left border stripe */
+.taskmap-accent-emerald::before { background: var(--emerald); }
+.taskmap-accent-amber::before   { background: var(--amber); }
+.taskmap-accent-red::before     { background: var(--red); }
+.taskmap-accent-muted::before   { background: var(--border-mid); }
+
+.taskmap-project-card:hover.taskmap-accent-emerald { border-color: var(--emerald-dim); box-shadow: 0 4px 20px var(--emerald-dim); }
+.taskmap-project-card:hover.taskmap-accent-red     { border-color: rgba(229,72,77,0.2); }
+
+.taskmap-project-inner {
+  flex: 1;
+  padding: 14px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.taskmap-project-arrow {
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 4px;
+  color: var(--text-muted);
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+.taskmap-project-card:hover .taskmap-project-arrow {
+  opacity: 1;
+  color: var(--text-secondary);
+}
+
+.taskmap-project-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.03em;
+  word-break: break-all;
+}
+
+.taskmap-project-active {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ── Status dots ─────────────────────────────────────────────── */
+.taskmap-status-dots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.taskmap-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.taskmap-dot-overflow {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.taskmap-dot-none {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Layer 2: Graph canvas ───────────────────────────────────── */
+#taskmap-graph {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-void);
+  position: relative;
+}
+
+/* ── Unassigned pool ─────────────────────────────────────────── */
+#taskmap-unassigned {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  max-height: 90px;
+  overflow-y: auto;
+}
+
+.taskmap-unsn-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 7px;
+}
+
+.taskmap-unsn-sub {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  margin-left: 6px;
+  opacity: 0.6;
+}
+
+.taskmap-unsn-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.taskmap-unsn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: default;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+.taskmap-unsn-chip:hover {
+  border-color: var(--border-mid);
+  color: var(--text-primary);
+}
+
+.taskmap-unsn-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue);
+  flex-shrink: 0;
+}
+
+/* ── Tool Card drawer ────────────────────────────────────────── */
+.taskmap-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 280px;
+  height: 100%;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+  box-shadow: var(--shadow-lg);
+}
+
+.taskmap-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.taskmap-drawer-header span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+.taskmap-drawer-close {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.taskmap-drawer-close:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.taskmap-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.taskmap-drawer-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.taskmap-drawer-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.taskmap-drawer-status-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.taskmap-drawer-category {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  background: var(--bg-card);
+}
+
+.taskmap-drawer-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.taskmap-drawer-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.taskmap-cap-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--emerald);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.taskmap-drawer-links-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.taskmap-drawer-link {
+  font-size: 11px;
+  color: var(--blue);
+  text-decoration: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+  text-transform: capitalize;
+}
+.taskmap-drawer-link:hover {
+  border-color: var(--blue);
+  color: var(--text-primary);
+}
+
+.taskmap-drawer-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+.taskmap-drawer-hint strong { color: var(--text-secondary); }
+
+/* ── States: loading / error / empty ─────────────────────────── */
+.taskmap-loading,
+.taskmap-error,
+.taskmap-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  min-height: 200px;
+  text-align: center;
+  padding: 32px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.taskmap-error { color: var(--red); }
+
+.taskmap-empty-icon {
+  font-size: 36px;
+  margin-bottom: 4px;
+}
+
+.taskmap-empty-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 280px;
+  line-height: 1.6;
+}
+
+/* ── Spinner ─────────────────────────────────────────────────── */
+.taskmap-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-mid);
+  border-top-color: var(--emerald);
+  border-radius: 50%;
+  animation: taskmap-spin 0.7s linear infinite;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+@keyframes taskmap-spin {
+  to { transform: rotate(360deg); }
+}
