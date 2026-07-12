@@ -175,10 +175,42 @@
     <!-- ===== TAB: TOOLS ===== -->
     <div class="tab-pane" id="pane-tools">
       <div class="tools-header">
-        <div>TOOLS</div>
-        <button class="filter-toggle" id="filter-toggle" aria-expanded="false">
-          FILTER ▸
-        </button>
+        <div class="tools-header-top">
+          <div>TOOLS</div>
+          <button class="filter-toggle" id="filter-toggle" aria-expanded="false">
+            FILTER ▸
+          </button>
+        </div>
+
+        <!-- Specialist auto-populate form -->
+        <div class="tool-specialist-row" id="tool-specialist-form">
+          <input
+            id="ts-name"
+            class="ts-input"
+            type="text"
+            placeholder="Tool name"
+            autocomplete="off"
+          />
+          <input
+            id="ts-url"
+            class="ts-input ts-input-url"
+            type="url"
+            placeholder="Docs URL"
+            autocomplete="off"
+          />
+          <select id="ts-category" class="ts-select">
+            <option value="">Category</option>
+            <option>Agent Platform</option>
+            <option>IDE</option>
+            <option>CLI</option>
+            <option>API</option>
+            <option>SDK</option>
+            <option>Google Product</option>
+            <option>Infrastructure</option>
+            <option>Other</option>
+          </select>
+          <button id="ts-research" class="btn-primary ts-research-btn" type="button">Research</button>
+        </div>
       </div>
 
       <!-- Collapsible filter accordion -->
@@ -196,6 +228,7 @@
         <!-- cards populated by JS -->
       </div>
     </div>
+
 
     <!-- ===== TAB: BLUEPRINTS ===== -->
     <div class="tab-pane" id="pane-blueprints">

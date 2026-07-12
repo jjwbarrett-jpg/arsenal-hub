@@ -46,6 +46,36 @@ _hub_state = {}
 # --- Clipboard Session ---
 CLIPBOARD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".files", "clipboard-session.json")
 
+# --- Specialist cards storage (auto-populated tool cards) ---
+SPECIALIST_CARDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".files", "tools", "specialist-cards.json")
+
+# Gemini-lite config for tool extraction (same as chainlit_app.py Scribe usage)
+GEMINI_EXTRACT_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+GEMINI_KEY_ENV = "GEMINI_API_KEY"
+GEMINI_KEY_ENV_FALLBACK = "GOOGLE_API_KEY"
+
+TOOL_EXTRACT_PROMPT = """You are a tool researcher. Extract structured information from this documentation page.
+
+Return ONLY valid JSON with these exact fields (no markdown fences, no extra text):
+{
+  "name": "<tool name>",
+  "description": "<2-3 sentence description of what it does>",
+  "category": "<best fit: Agent Platform | IDE | CLI | API | SDK | Google Product | Infrastructure | Other>",
+  "tags": ["<3-5 relevant tags>"],
+  "pricing_model": "<free | freemium | paid | subscription | self-hosted>",
+  "pricing_details": "<brief pricing info or null>",
+  "has_api": <true|false>,
+  "has_cli": <true|false>,
+  "has_gui": <true|false>,
+  "key_features": ["<3-6 key features>"],
+  "docs_url": "<best documentation link or null>",
+  "github_url": "<GitHub URL if found or null>",
+  "website_url": "<homepage URL if found or null>"
+}
+
+Page content:
+{content}"""
+
 # --- Skills directory ---
 SKILLS_DIR = os.path.expanduser("~/.hermes/skills")
 
@@ -154,6 +184,66 @@ def _get_memory_context():
         except Exception as e:
             last_err = str(e)
     raise RuntimeError(f"memory_client failed: {last_err}")
+
+
+def _load_specialist_cards():
+    """Load specialist-populated tool cards from JSON file. Returns [] on miss/corrupt."""
+    try:
+        if os.path.exists(SPECIALIST_CARDS_FILE):
+            with open(SPECIALIST_CARDS_FILE, 'r') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except (json.JSONDecodeError, IOError):
+        pass
+    return []
+
+
+def _save_specialist_cards(cards):
+    """Persist specialist cards list to JSON file."""
+    try:
+        os.makedirs(os.path.dirname(SPECIALIST_CARDS_FILE), exist_ok=True)
+        with open(SPECIALIST_CARDS_FILE, 'w') as f:
+            json.dump(cards, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
+def _call_gemini_extract(content):
+    """Send page content to Gemini-lite and return extracted JSON dict.
+    Uses stdlib urllib to stay dependency-free (same as the chat proxy).
+    Raises ValueError if the model returns unparseable JSON after one retry.
+    """
+    import urllib.request as _ur
+
+    api_key = os.environ.get(GEMINI_KEY_ENV, '') or os.environ.get(GEMINI_KEY_ENV_FALLBACK, '')
+    if not api_key:
+        raise RuntimeError("No GEMINI_API_KEY or GOOGLE_API_KEY found in environment")
+
+    prompt = TOOL_EXTRACT_PROMPT.replace('{content}', content[:8000])
+    payload = json.dumps({
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024}
+    }).encode('utf-8')
+
+    url = f"{GEMINI_EXTRACT_URL}?key={api_key}"
+    req = _ur.Request(url, data=payload)
+    req.add_header('Content-Type', 'application/json')
+
+    with _ur.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read())
+
+    # Extract text from Gemini response structure
+    parts = result.get('candidates', [{}])[0].get('content', {}).get('parts', [])
+    raw_text = ''.join(p.get('text', '') for p in parts).strip()
+
+    # Strip markdown fences if the model wrapped output in ```json ... ```
+    if raw_text.startswith('```'):
+        raw_text = re.sub(r'^```[\w]*\n?', '', raw_text)
+        raw_text = re.sub(r'\n?```$', '', raw_text).strip()
+
+    return json.loads(raw_text)  # Raises json.JSONDecodeError on bad output
 
 
 def _list_skills():
@@ -516,6 +606,10 @@ class KanbanHandler(BaseHTTPRequestHandler):
         if path == '/api/boards':
             return self._send_json({"boards": list_kanban_boards()})
 
+        if path == '/api/tools/specialist':
+            cards = _load_specialist_cards()
+            return self._send_json({'cards': cards, 'count': len(cards)})
+
         if path == '/api/skills':
             try:
                 categories = _list_skills()
@@ -757,6 +851,113 @@ class KanbanHandler(BaseHTTPRequestHandler):
                     return self._send_json(result)
             except Exception as e:
                 return self._send_json({"error": str(e)}, 502)
+
+        # --- Tool Card Specialist Ingest ---
+        if path == '/api/tools/ingest':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+
+            name = (body.get('name') or '').strip()
+            url_str = (body.get('url') or '').strip()
+            user_category = (body.get('category') or '').strip()
+
+            if not name or not url_str:
+                return self._send_json({'error': 'name and url are required'}, 400)
+
+            # 1. Fetch the URL
+            import urllib.request as _ur
+            try:
+                fetch_req = _ur.Request(url_str)
+                fetch_req.add_header('User-Agent', 'ArsenalHub/1.0 (Tool Card Specialist)')
+                with _ur.urlopen(fetch_req, timeout=15) as resp:
+                    raw_bytes = resp.read()
+                try:
+                    raw_html = raw_bytes.decode('utf-8', errors='replace')
+                except Exception:
+                    raw_html = raw_bytes.decode('latin-1', errors='replace')
+            except Exception as e:
+                return self._send_json({'error': f'Could not fetch documentation: {str(e)}'}, 422)
+
+            # 2. Strip HTML tags → plain text
+            plain = re.sub(r'<[^>]+>', ' ', raw_html)
+            plain = re.sub(r'[ \t]{2,}', ' ', plain)
+            plain = re.sub(r'\n{3,}', '\n\n', plain).strip()
+
+            # 3. Call Gemini-lite with extraction prompt
+            extracted = None
+            raw_text_fallback = None
+            for attempt in range(2):
+                try:
+                    extracted = _call_gemini_extract(plain)
+                    break
+                except json.JSONDecodeError as jde:
+                    raw_text_fallback = str(jde)
+                except Exception as e:
+                    return self._send_json({'error': f'Gemini extraction failed: {str(e)}'}, 502)
+
+            if extracted is None:
+                # Both attempts failed — return raw text for manual review
+                return self._send_json({
+                    'status': 'partial',
+                    'message': 'Could not parse structured data from model response',
+                    'raw_text': raw_text_fallback or ''
+                })
+
+            # 4. Build the full Tool Card
+            tool_id = 'tool-' + re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+            now_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+            # Build tags list from model output
+            model_tags = extracted.get('tags') or []
+            feature_tags = []
+            if extracted.get('has_api'): feature_tags.append('API')
+            if extracted.get('has_cli'): feature_tags.append('CLI')
+            if extracted.get('has_gui'): feature_tags.append('GUI')
+            final_tags = list(dict.fromkeys(model_tags + feature_tags))  # dedupe, preserve order
+
+            pricing = {}
+            if extracted.get('pricing_model'):
+                pricing['model'] = extracted['pricing_model']
+            if extracted.get('pricing_details'):
+                pricing['details'] = extracted['pricing_details']
+
+            links = {}
+            if extracted.get('docs_url'):    links['docs']    = extracted['docs_url']
+            if extracted.get('github_url'):  links['github']  = extracted['github_url']
+            if extracted.get('website_url'): links['website'] = extracted['website_url']
+            if url_str not in links.values(): links.setdefault('docs', url_str)
+
+            card = {
+                'id': tool_id,
+                'name': name,  # always use user-supplied name
+                'category': user_category or extracted.get('category', 'Other'),
+                'tags': final_tags,
+                'status': 'active',
+                'description': extracted.get('description', ''),
+                'summary': extracted.get('description', ''),  # alias for renderToolGrid
+                'pricing': pricing,
+                'peak_hours': None,
+                'links': links,
+                'features': extracted.get('key_features', []),
+                'lastUpdated': now_iso,
+                'source': 'specialist'
+            }
+
+            # 5. Upsert into specialist-cards.json (match by name, case-insensitive)
+            cards = _load_specialist_cards()
+            name_lower = name.lower()
+            replaced = False
+            for i, c in enumerate(cards):
+                if c.get('name', '').lower() == name_lower:
+                    cards[i] = card
+                    replaced = True
+                    break
+            if not replaced:
+                cards.append(card)
+            _save_specialist_cards(cards)
+
+            print(f'[specialist] {"Updated" if replaced else "Added"} card: {name}')
+            return self._send_json(card, 201)
 
         if path == '/api/tasks':
             content_len = int(self.headers.get('Content-Length', 0))

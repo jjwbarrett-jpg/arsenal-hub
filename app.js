@@ -13,7 +13,9 @@
   const STORAGE_TOOLS = 'arsenal-hub-v1-tools';
   // State
   let tools = [];
+  let specialistCards = [];   // auto-populated from /api/tools/specialist
   let currentToolFilter = 'ALL';
+
 
   // ===== INIT TOOLS =====
   function loadTools() {
@@ -33,7 +35,41 @@
       status: saved[t.id]?.status || t.status || 'idle',
       expanded: !!saved[t.id]?.expanded
     }));
+
+    // Merge any already-loaded specialist cards
+    _mergeSpecialistCards();
   }
+
+  // Merge specialistCards into the tools array (append, no duplicate names)
+  function _mergeSpecialistCards() {
+    const existingNames = new Set(tools.map(t => t.name.toLowerCase()));
+    specialistCards.forEach(sc => {
+      if (existingNames.has(sc.name.toLowerCase())) {
+        // Update the existing card in-place with specialist data
+        const idx = tools.findIndex(t => t.name.toLowerCase() === sc.name.toLowerCase());
+        if (idx !== -1) tools[idx] = { ...tools[idx], ...sc, _specialist: true };
+      } else {
+        tools.push({ ...sc, _specialist: true, expanded: false });
+        existingNames.add(sc.name.toLowerCase());
+      }
+    });
+  }
+
+  // Async: fetch specialist cards from server, merge, re-render
+  function loadSpecialistCards() {
+    const apiBase = window.location.origin.replace(':5000', ':9121');
+    fetch(apiBase + '/api/tools/specialist')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data || !Array.isArray(data.cards)) return;
+        specialistCards = data.cards;
+        _mergeSpecialistCards();
+        updateActiveCount();
+        renderToolGrid();
+      })
+      .catch(() => { /* server not running — silent */ });
+  }
+
 
   function saveToolsState() {
     const map = {};
@@ -606,9 +642,18 @@
       const sess = tool.sessions ? `<span class="sessions">${tool.sessions} sessions</span>` : '';
       const tagsHtml = (tool.tags || []).map(t => `<span class="tag-pill" data-tag="${t}">${t}</span>`).join('');
 
+      // Specialist badge — shown below tags for auto-populated cards
+      let specialistBadge = '';
+      if (tool._specialist) {
+        const dateStr = tool.lastUpdated
+          ? new Date(tool.lastUpdated).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          : '';
+        specialistBadge = `<div class="tool-specialist-badge">🤖 Auto-populated${dateStr ? ' · ' + dateStr : ''}</div>`;
+      }
+
       let extra = '';
-      if (tool.expanded && tool.description) {
-        extra = `<div class="tool-desc">${escapeHtml(tool.description)}</div>`;
+      if (tool.expanded && (tool.description || tool.summary)) {
+        extra = `<div class="tool-desc">${escapeHtml(tool.description || tool.summary)}</div>`;
       }
 
       const platformUrl = tool.links?.platform;
@@ -628,8 +673,10 @@
         </div>
         <div class="tool-sessions">${sess}</div>
         <div class="tool-tags">${tagsHtml}</div>
+        ${specialistBadge}
         ${extra}
       `;
+
 
       // Expand / collapse on card (except interactive children)
       card.querySelector('.tool-open-browser')?.addEventListener('click', (e) => {
@@ -672,10 +719,83 @@
 
   // ===== STATIC TICKER =====
   function initTicker() {
+
     const t = document.getElementById('ticker-content');
     if (!t) return;
     t.addEventListener('mouseenter', () => t.style.animationPlayState = 'paused');
     t.addEventListener('mouseleave', () => t.style.animationPlayState = 'running');
+  }
+
+  // ===== TOOL CARD SPECIALIST =====
+  function ingestTool(name, url, category) {
+    const btn = document.getElementById('ts-research');
+    if (btn) { btn.textContent = 'Researching…'; btn.disabled = true; }
+
+    const apiBase = window.location.origin.replace(':5000', ':9121');
+    fetch(apiBase + '/api/tools/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, url, category })
+    })
+      .then(r => r.json().then(data => ({ ok: r.ok, status: r.status, data })))
+      .then(({ ok, data }) => {
+        if (!ok) {
+          showToast('❌ ' + (data.error || 'Ingest failed'), 5000);
+          return;
+        }
+        if (data.status === 'partial') {
+          showToast('⚠️ Extraction incomplete — check server logs', 5000);
+          return;
+        }
+        // Success: upsert into specialistCards, reload + re-render
+        const idx = specialistCards.findIndex(c => c.name.toLowerCase() === data.name.toLowerCase());
+        if (idx !== -1) specialistCards[idx] = data;
+        else specialistCards.push(data);
+
+        loadTools();           // reloads base tools from window.TOOLS
+        _mergeSpecialistCards(); // re-applies specialist overrides
+        updateActiveCount();
+        renderToolFilters();
+        renderToolGrid();
+
+        // Clear form inputs
+        const nameEl = document.getElementById('ts-name');
+        const urlEl  = document.getElementById('ts-url');
+        if (nameEl) nameEl.value = '';
+        if (urlEl)  urlEl.value  = '';
+
+        showToast(`✅ "${data.name}" card populated`, 4000);
+      })
+      .catch(err => {
+        showToast('❌ Network error: ' + err.message, 5000);
+      })
+      .finally(() => {
+        if (btn) { btn.textContent = 'Research'; btn.disabled = false; }
+      });
+  }
+
+  function initToolSpecialist() {
+    const btn = document.getElementById('ts-research');
+    if (!btn) return;
+
+    btn.addEventListener('click', () => {
+      const name     = (document.getElementById('ts-name')?.value     || '').trim();
+      const url      = (document.getElementById('ts-url')?.value      || '').trim();
+      const category = (document.getElementById('ts-category')?.value || '').trim();
+
+      if (!name) { showToast('Enter a tool name first', 2500); return; }
+      if (!url)  { showToast('Enter a docs URL first', 2500); return; }
+
+      ingestTool(name, url, category);
+    });
+
+    // Enter key in URL field triggers research
+    const urlEl = document.getElementById('ts-url');
+    if (urlEl) {
+      urlEl.addEventListener('keydown', e => {
+        if (e.key === 'Enter') btn.click();
+      });
+    }
   }
 
   // ===== UTILS =====
@@ -724,7 +844,9 @@
   function init() {
     // Tools
     loadTools();
+    loadSpecialistCards();   // async: fetches from server, merges, re-renders
     updateActiveCount();
+
 
     // Tabs
     initTabs();
@@ -744,8 +866,12 @@
     renderToolFilters();
     renderToolGrid();
 
+    // Tool Card Specialist form
+    initToolSpecialist();
+
     // Ticker
     initTicker();
+
 
     // Shortcuts
     initKeyboardShortcuts();

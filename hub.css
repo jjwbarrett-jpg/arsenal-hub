@@ -508,15 +508,103 @@ body {
 
 .tools-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px 6px;
+  flex-direction: column;
+  gap: 0;
+  padding: 10px 16px 8px;
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   color: var(--text-muted);
   letter-spacing: 0.1em;
+  flex-shrink: 0;
 }
+
+.tools-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+/* ===== TOOL CARD SPECIALIST FORM ===== */
+.tool-specialist-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-bottom: 4px;
+}
+
+.ts-input {
+  flex: 1;
+  min-width: 120px;
+  height: 28px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 0 8px;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  letter-spacing: normal;
+}
+.ts-input-url { flex: 2; min-width: 180px; }
+.ts-input:focus {
+  border-color: var(--emerald);
+  box-shadow: 0 0 0 2px var(--emerald-dim);
+}
+.ts-input::placeholder { color: var(--text-muted); }
+
+.ts-select {
+  height: 28px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 0 6px;
+  cursor: pointer;
+  outline: none;
+  letter-spacing: normal;
+  transition: border-color var(--transition-fast);
+}
+.ts-select:focus { border-color: var(--emerald); }
+
+.ts-research-btn {
+  height: 28px;
+  padding: 0 14px;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ts-research-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  animation: ts-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ts-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 0.35; }
+}
+
+/* Auto-populated badge on tool cards */
+.tool-specialist-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--amber);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
 
 .filter-toggle {
   font-family: var(--font-mono);
