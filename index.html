@@ -38,6 +38,7 @@
     </div>
     <div class="header-right">
       <div class="active-count" id="active-count">⚡ <span id="active-num">0</span> Active</div>
+      <button class="btn-small header-chat-btn" id="header-chat-btn" title="Open Hub Chat">💬 Chat</button>
     </div>
   </header>
 
@@ -45,7 +46,8 @@
   <div class="tabs">
     <!-- killed 2026-07-08 — chat lives in slide-out -->
     <!-- <button class="tab-btn" data-tab="chat">CHAT</button> -->
-    <button class="tab-btn active" data-tab="clipboard-session">CLIPBOARD</button>
+    <button class="tab-btn active" data-tab="home">HOME</button>
+    <button class="tab-btn" data-tab="clipboard-session">CLIPBOARD</button>
     <button class="tab-btn" data-tab="workflow">WORKFLOW</button>
     <button class="tab-btn" data-tab="kanban">KANBAN</button>
     <button class="tab-btn" data-tab="tools">TOOLS</button>
@@ -61,8 +63,102 @@
       <iframe class="chainlit-frame" title="Chainlit Chat" allow="camera;microphone"></iframe>
     </div> -->
 
+    <!-- ===== TAB: HOME (default landing) ===== -->
+    <div class="tab-pane active" id="pane-home">
+
+      <!-- Zone 1: Needs Attention (the pulse) -->
+      <div class="home-zone home-zone-pulse">
+        <div class="home-zone-label">⚡ NEEDS ATTENTION</div>
+        <div class="home-pulse-cards">
+
+          <div class="home-stat-card" id="home-stat-blocked" data-jump-tab="kanban" role="button" tabindex="0" title="Go to Kanban">
+            <div class="home-stat-num">—</div>
+            <div class="home-stat-label">🔴 Blocked</div>
+          </div>
+
+          <div class="home-stat-card" id="home-stat-due" data-jump-tab="home" role="button" tabindex="0" title="View deadlines">
+            <div class="home-stat-num">—</div>
+            <div class="home-stat-label">📅 Due (7d)</div>
+          </div>
+
+          <div class="home-stat-card" id="home-stat-active" data-jump-tab="taskmap" role="button" tabindex="0" title="Go to Task Map">
+            <div class="home-stat-num">—</div>
+            <div class="home-stat-label">⏳ Active</div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Zone 2: The Glance (2×2 grid) -->
+      <div class="home-zone home-zone-glance">
+        <div class="home-glance-grid">
+
+          <!-- Agents -->
+          <div class="home-panel">
+            <div class="home-panel-title">AGENTS</div>
+            <div class="home-panel-body" id="home-agents-body">
+              <div class="home-empty">Loading…</div>
+            </div>
+          </div>
+
+          <!-- Recent Clipboard -->
+          <div class="home-panel">
+            <div class="home-panel-title">RECENT CLIPBOARD</div>
+            <div class="home-panel-body" id="home-clipboard-body">
+              <div class="home-empty">Loading…</div>
+            </div>
+          </div>
+
+          <!-- Tool Alerts -->
+          <div class="home-panel">
+            <div class="home-panel-title">TOOL ALERTS</div>
+            <div class="home-panel-body" id="home-alerts-body">
+              <div class="home-empty">Loading…</div>
+            </div>
+          </div>
+
+          <!-- Upcoming + Deadlines form -->
+          <div class="home-panel">
+            <div class="home-panel-title">UPCOMING</div>
+            <div class="home-panel-body" id="home-upcoming-body">
+              <div class="home-empty">Loading…</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Deadlines management -->
+      <div class="home-zone home-zone-deadlines">
+        <div class="home-zone-label">DEADLINES &amp; EVENTS</div>
+        <div class="home-deadline-form" id="home-deadline-form">
+          <input type="text" id="home-dl-title" class="home-dl-input" placeholder="Title…" autocomplete="off" />
+          <input type="date" id="home-dl-date"  class="home-dl-input home-dl-date" />
+          <select id="home-dl-type" class="home-dl-select">
+            <option value="deadline">Deadline</option>
+            <option value="event">Event</option>
+            <option value="reminder">Reminder</option>
+          </select>
+          <button id="home-deadline-add" class="btn-primary home-dl-btn">Add</button>
+        </div>
+        <div id="home-deadlines-list" class="home-deadlines-list">
+          <div class="home-empty">No deadlines added yet</div>
+        </div>
+      </div>
+
+      <!-- Zone 3: The Action (footer bar) -->
+      <div class="home-zone home-zone-action">
+        <button class="btn-secondary" id="home-quick-deploy" disabled title="Coming soon">+ Quick Deploy</button>
+        <div class="home-chat-bar">
+          <input type="text" id="home-chat-bar-input" class="home-chat-input" placeholder="Message Hermes…" autocomplete="off" />
+          <button id="home-chat-bar-send" class="btn-primary">💬 Chat</button>
+        </div>
+      </div>
+
+    </div>
+
     <!-- ===== TAB: CLIPBOARD (session) — NEW, separate from WORKFLOW→Scratch ===== -->
-    <div class="tab-pane active" id="pane-clipboard-session">
+    <div class="tab-pane" id="pane-clipboard-session">
       <!-- Index / home view -->
       <div class="cs-pane" id="cs-index"></div>
       <!-- Subject detail view -->
@@ -397,6 +493,7 @@
   <script src="data.js"></script>
   <script src="decomposer.js"></script>
   <script src="blueprints.js"></script>
+  <script src="home.js"></script>
   <script src="app.js"></script>
   <script src="planning-board.js"></script>
   <script src="kanban.js"></script>

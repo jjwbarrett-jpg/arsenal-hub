@@ -164,8 +164,8 @@
     if (slideout) slideout.hidden = true;
 
     const hash = (location.hash || '').replace(/^#/, '');
-    const validTabs = ['clipboard-session', 'workflow', 'kanban', 'tools', 'blueprints', 'taskmap'];
-    const initialTab = validTabs.includes(hash) ? hash : 'workflow';
+    const validTabs = ['home', 'clipboard-session', 'workflow', 'kanban', 'tools', 'blueprints', 'taskmap'];
+    const initialTab = validTabs.includes(hash) ? hash : 'home';
 
     if (initialTab !== 'chat') {
       switchTab(initialTab);
@@ -243,6 +243,9 @@
     }
     if (target === 'blueprints' && window.BlueprintsTab) {
       BlueprintsTab.render();
+    }
+    if (target === 'home' && window.HomeTab) {
+      window.HomeTab.init();
     }
     if (target === 'taskmap' && window.TaskMap) {
       window.TaskMap.init();
@@ -425,9 +428,17 @@
     const skillPopoverLoad  = document.getElementById('skill-popover-load');
     const skillPopoverClose = document.getElementById('skill-popover-close');
 
-    // --- Toggle chat slide-out ---
+    // --- Toggle chat slide-out (hermes-float button) ---
     if (hermesBtn && slideout) {
       hermesBtn.addEventListener('click', () => {
+        slideout.hidden = !slideout.hidden;
+      });
+    }
+
+    // --- Header chat button (💬 Chat in top-right) ---
+    const headerChatBtn = document.getElementById('header-chat-btn');
+    if (headerChatBtn && slideout) {
+      headerChatBtn.addEventListener('click', () => {
         slideout.hidden = !slideout.hidden;
       });
     }
@@ -1156,6 +1167,9 @@
     loadSpecialistCards();   // async: fetches from server, merges, re-renders
     updateActiveCount();
 
+
+    // Home tab (dashboard — loads first since it's the default tab)
+    if (window.HomeTab) HomeTab.init();
 
     // Tabs
     initTabs();

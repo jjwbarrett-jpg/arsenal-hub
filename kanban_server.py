@@ -45,6 +45,7 @@ _hub_state = {}
 
 # --- Clipboard Session ---
 CLIPBOARD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".files", "clipboard-session.json")
+DEADLINES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".files", "deadlines.json")
 
 # --- Specialist cards storage (auto-populated tool cards) ---
 _REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -972,6 +973,203 @@ def _save_clipboard(state):
         return True
     except IOError:
         return False
+
+
+# --- Deadlines ---
+
+def _load_deadlines():
+    """Load deadlines list from JSON file. Returns [] if missing/corrupt."""
+    try:
+        if os.path.exists(DEADLINES_FILE):
+            with open(DEADLINES_FILE, 'r') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except (json.JSONDecodeError, IOError):
+        pass
+    return []
+
+
+def _save_deadlines(items):
+    """Persist deadlines list to JSON file."""
+    try:
+        os.makedirs(os.path.dirname(DEADLINES_FILE), exist_ok=True)
+        with open(DEADLINES_FILE, 'w') as f:
+            json.dump(items, f, indent=2)
+        return True
+    except IOError:
+        return False
+
+
+# --- Tool alerts (best-effort text scan of specialist card fields) ---
+
+_ALERT_KEYWORDS = [
+    'expire', 'expires', 'expiring', 'end ', 'ends ', 'ending ',
+    'cancel', 'renew', 'renewal', 'sunset', 'deprecated', 'eol',
+    ' jan ', ' feb ', ' mar ', ' apr ', ' may ', ' jun ',
+    ' jul ', ' aug ', ' sep ', ' oct ', ' nov ', ' dec ',
+]
+
+def _get_tool_alerts(cards):
+    """Scan specialist card text fields for expiry/alert hints.
+    Returns list of {tool, alert} dicts.
+    """
+    alerts = []
+    for card in cards:
+        name = card.get('name', '')
+        blobs = [
+            card.get('pricing_details') or '',
+            card.get('context_notes') or '',
+        ]
+        for blob in blobs:
+            if not blob:
+                continue
+            low = ' ' + blob.lower() + ' '
+            for kw in _ALERT_KEYWORDS:
+                if kw in low:
+                    snippet = blob[:120].strip()
+                    alerts.append({'tool': name, 'alert': snippet})
+                    break
+            else:
+                continue
+            break  # one alert per card
+    return alerts
+
+
+# --- Dashboard aggregation ---
+
+def _dashboard_attention_counts():
+    """Return (blocked, active) task counts across all kanban boards."""
+    blocked = 0
+    active = 0
+    seen_task_ids = set()
+    # Default DB
+    try:
+        conn = get_db()
+        ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT id, status FROM tasks WHERE status IN ('blocked', 'in_progress')"
+        ).fetchall()
+        for r in rows:
+            if r['id'] not in seen_task_ids:
+                seen_task_ids.add(r['id'])
+                if r['status'] == 'blocked':
+                    blocked += 1
+                elif r['status'] == 'in_progress':
+                    active += 1
+        conn.close()
+    except Exception:
+        pass
+    # Per-board DBs
+    for board in list_kanban_boards():
+        if board == 'default':
+            continue
+        try:
+            conn_b = get_db(board)
+            ensure_schema(conn_b)
+            rows = conn_b.execute(
+                "SELECT id, status FROM tasks WHERE status IN ('blocked', 'in_progress')"
+            ).fetchall()
+            for r in rows:
+                if r['id'] not in seen_task_ids:
+                    seen_task_ids.add(r['id'])
+                    if r['status'] == 'blocked':
+                        blocked += 1
+                    elif r['status'] == 'in_progress':
+                        active += 1
+            conn_b.close()
+        except Exception:
+            pass
+    return blocked, active
+
+
+def _build_dashboard():
+    """Aggregate all dashboard data in one call."""
+    import datetime
+
+    # Deadlines
+    deadlines = _load_deadlines()
+    now_date = datetime.date.today()
+    soon_cutoff = now_date + datetime.timedelta(days=7)
+
+    due_soon = 0
+    upcoming = []
+    for d in sorted(deadlines, key=lambda x: x.get('date', '')):
+        try:
+            dl_date = datetime.date.fromisoformat(d['date'])
+        except (KeyError, ValueError):
+            continue
+        if now_date <= dl_date <= soon_cutoff:
+            due_soon += 1
+        if dl_date >= now_date:
+            upcoming.append({
+                'title': d.get('title', ''),
+                'date': d.get('date', ''),
+                'type': d.get('type', 'deadline'),
+            })
+    upcoming = upcoming[:5]
+
+    # Kanban counts
+    blocked, active = _dashboard_attention_counts()
+
+    # Recent clipboard (last 5 panels, newest first)
+    clipboard_state = _load_clipboard()
+    all_panels = clipboard_state.get('panels') or clipboard_state.get('subjects') or []
+    sorted_panels = sorted(
+        all_panels,
+        key=lambda p: p.get('updatedAt') or p.get('createdAt') or '',
+        reverse=True
+    )
+    recent_clipboard = [
+        {
+            'source': p.get('source', 'unknown'),
+            'title': p.get('title', '(untitled)')[:80],
+            'date': p.get('updatedAt') or p.get('createdAt') or '',
+        }
+        for p in sorted_panels[:5]
+    ]
+
+    # Agents: from _hub_state (if present) + in-progress Kanban assignees
+    agents_out = []
+    seen_agents = set()
+    hub_agents = _hub_state.get('agents') or []
+    for ag in hub_agents:
+        name = ag.get('name', ag.get('id', ''))
+        if name and name not in seen_agents:
+            seen_agents.add(name)
+            agents_out.append({
+                'name': name,
+                'status': ag.get('status', 'idle'),
+                'activity': ag.get('activity', ag.get('currentTask', '')),
+            })
+    # Supplement from in-progress Kanban assignees
+    try:
+        conn = get_db()
+        ensure_schema(conn)
+        ip_rows = conn.execute(
+            "SELECT assignee, title FROM tasks "
+            "WHERE status = 'in_progress' AND assignee != '' AND assignee IS NOT NULL"
+        ).fetchall()
+        conn.close()
+        for r in ip_rows:
+            assignee = (r['assignee'] or '').strip()
+            if assignee and assignee not in seen_agents:
+                seen_agents.add(assignee)
+                agents_out.append({'name': assignee, 'status': 'active', 'activity': r['title']})
+    except Exception:
+        pass
+
+    # Tool alerts
+    cards = _load_specialist_cards()
+    tool_alerts = _get_tool_alerts(cards)
+
+    return {
+        'attention': {'blocked': blocked, 'due_soon': due_soon, 'active': active},
+        'agents': agents_out,
+        'recent_clipboard': recent_clipboard,
+        'tool_alerts': tool_alerts,
+        'upcoming': upcoming,
+    }
 
 
 def _parse_frontmatter_regex(text):
@@ -2009,6 +2207,16 @@ class KanbanHandler(BaseHTTPRequestHandler):
 
             return self._send_json(result)
 
+        if path == '/api/deadlines':
+            return self._send_json(_load_deadlines())
+
+        if path == '/api/dashboard':
+            try:
+                return self._send_json(_build_dashboard())
+            except Exception as e:
+                print(f'[dashboard] Error: {e}')
+                return self._send_json({'error': str(e)}, 500)
+
         return self._send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
@@ -2329,6 +2537,26 @@ class KanbanHandler(BaseHTTPRequestHandler):
 
             return self._send_json(task_to_dict(task), 201)
 
+        if path == '/api/deadlines':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+            title = (body.get('title') or '').strip()
+            date_str = (body.get('date') or '').strip()
+            if not title or not date_str:
+                return self._send_json({'error': 'title and date are required'}, 400)
+            items = _load_deadlines()
+            new_item = {
+                'id': f"dl-{int(time.time())}-{os.urandom(3).hex()}",
+                'title': title,
+                'date': date_str,
+                'project': (body.get('project') or '').strip() or None,
+                'type': body.get('type', 'deadline') if body.get('type') in ('deadline', 'event', 'reminder') else 'deadline',
+                'createdAt': time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            items.append(new_item)
+            _save_deadlines(items)
+            return self._send_json(new_item, 201)
+
         return self._send_json({"error": "Not found"}, 404)
 
     def do_PATCH(self):
@@ -2456,6 +2684,17 @@ class KanbanHandler(BaseHTTPRequestHandler):
             conn.close()
 
             return self._send_json({"deleted": task_id})
+
+        if path.startswith('/api/deadlines/'):
+            dl_id = path.split('/api/deadlines/', 1)[1].strip()
+            if not dl_id:
+                return self._send_json({'error': 'id required'}, 400)
+            items = _load_deadlines()
+            new_items = [d for d in items if d.get('id') != dl_id]
+            if len(new_items) == len(items):
+                return self._send_json({'error': 'Deadline not found'}, 404)
+            _save_deadlines(new_items)
+            return self._send_json({'deleted': dl_id})
 
         return self._send_json({"error": "Not found"}, 404)
 
