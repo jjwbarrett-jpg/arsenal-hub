@@ -232,84 +232,57 @@
     </div>
 
 
-    <!-- ===== TAB: BLUEPRINTS ===== -->
+    <!-- ===== TAB: BLUEPRINTS (specialist-led chat) ===== -->
     <div class="tab-pane" id="pane-blueprints">
       <div class="blueprints-header">
         <div>BLUEPRINTS</div>
-        <button class="btn-primary" id="btn-new-blueprint">+ New Blueprint</button>
-      </div>
-
-      <div class="bp-progress" id="bp-progress" hidden>Decomposing…</div>
-
-      <div class="blueprints-body">
-        <!-- Blueprint list + Tree -->
-        <div class="blueprint-sidebar">
-          <div class="bp-list" id="bp-list">
-            <!-- blueprint picker populated by JS -->
-          </div>
-          <div class="blueprint-tree" id="blueprint-tree">
-            <!-- decomposition tree populated by JS -->
-          </div>
-        </div>
-
-        <!-- Detail / edit panel -->
-        <div class="blueprint-detail" id="blueprint-detail">
-          <div class="detail-empty" id="detail-empty">
-            Create a new blueprint or select a node from the tree.
-          </div>
-
-          <div class="detail-content" id="detail-content" hidden>
-            <div class="detail-selected">
-              <span class="sel-label">Selected:</span>
-              <span id="sel-path"></span>
-            </div>
-
-            <div class="bp-fields">
-              <div class="bp-field">
-                <label>Name</label>
-                <input class="bp-input" id="bp-node-name" type="text" />
-              </div>
-              <div class="bp-field">
-                <label>Description</label>
-                <textarea class="bp-textarea" id="bp-node-desc" rows="4"></textarea>
-              </div>
-              <div class="bp-field">
-                <label>Attributes</label>
-                <div class="bp-attrs" id="bp-node-attrs"></div>
-                <button class="btn-small" id="btn-add-attr" type="button">+ Attribute</button>
-              </div>
-            </div>
-
-            <div class="bp-actions-row">
-              <button class="btn-secondary" id="btn-add-child" type="button">+ Child</button>
-              <button class="btn-secondary" id="btn-remove-node" type="button">Remove</button>
-              <button class="btn-secondary" id="btn-refill" type="button">Re-run AI</button>
-              <button class="btn-secondary" id="btn-approve" type="button">Approve</button>
-            </div>
-
-            <div class="bp-meta">
-              <span id="bp-created"></span>
-            </div>
-          </div>
+        <div class="bp-header-actions">
+          <button class="btn-secondary" id="btn-bp-load" type="button" title="Load a saved blueprint">Load</button>
+          <button class="btn-primary" id="btn-new-blueprint" type="button">New</button>
         </div>
       </div>
 
-      <div class="bp-footer-actions">
-        <button class="btn-secondary" id="btn-save-bp" type="button">Save</button>
-        <button class="btn-primary" id="btn-dispatch" disabled title="Dispatch not wired in MVP">Dispatch</button>
-        <button class="btn-secondary" id="btn-export" type="button">Export Markdown</button>
-        <button class="btn-secondary" id="btn-delete-bp" type="button">Delete</button>
+      <div class="bp-chat-layout">
+        <div class="bp-chat-toolbar">
+          <label class="bp-template-label" for="bp-template">Template</label>
+          <select id="bp-template" class="bp-template-select">
+            <option value="game">Game</option>
+            <option value="app">App</option>
+            <option value="website">Website</option>
+            <option value="utility">Utility</option>
+          </select>
+          <div class="bp-extracted-chips" id="bp-extracted-chips" aria-live="polite"></div>
+        </div>
+
+        <div class="bp-chat-area" id="bp-chat-area" role="log" aria-live="polite">
+          <!-- messages rendered by blueprints.js -->
+        </div>
+
+        <div class="bp-review-card" id="bp-review-card" hidden>
+          <!-- completed blueprint review rendered by JS -->
+        </div>
+
+        <div class="bp-chat-input-row">
+          <textarea
+            id="bp-chat-input"
+            class="bp-chat-input"
+            rows="2"
+            placeholder="Type your response…"
+            aria-label="Blueprint chat message"
+          ></textarea>
+          <button class="btn-primary" id="bp-chat-send" type="button">Send</button>
+        </div>
+
+        <div class="bp-chat-status" id="bp-chat-status" hidden></div>
       </div>
 
-      <!-- Deadlines (minimal / static for Phase 1) -->
-      <div class="deadlines-section">
-        <div class="deadlines-header-row">
-          <span>DEADLINES</span>
-          <button class="btn-small" id="deadline-add" disabled title="Deadline interactivity not in Phase 1">+ Add</button>
+      <!-- Hidden load panel -->
+      <div class="bp-load-panel" id="bp-load-panel" hidden>
+        <div class="bp-load-header">
+          <span>Saved blueprints</span>
+          <button class="btn-small" id="bp-load-close" type="button">Close</button>
         </div>
-        <div class="deadlines-list" id="deadlines-list">
-          <!-- static examples for Phase 1 -->
-        </div>
+        <div class="bp-list" id="bp-list"></div>
       </div>
     </div>
 

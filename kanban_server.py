@@ -98,6 +98,851 @@ Page content:
 # --- Skills directory ---
 SKILLS_DIR = os.path.expanduser("~/.hermes/skills")
 
+# --- Blueprint specialist (chat-led decomposition) ---
+BLUEPRINTS_DIR = os.path.join(_REPO_ROOT, "blueprints")
+BLUEPRINTS_COMPLETED_DIR = os.path.join(BLUEPRINTS_DIR, "completed")
+
+BLUEPRINT_TEMPLATES = {
+    "game": {
+        "required": ["name", "genre", "engine", "platform"],
+        "optional": ["scope", "setting", "art_style", "players", "monetization"],
+        "questions": {
+            "name": "What should we call this project?",
+            "genre": "What genre? (Fighting, platformer, puzzle, RPG, etc.)",
+            "engine": "What engine? (Unreal, Godot, Unity, etc.)",
+            "platform": "Target platform? (PC, console, mobile, web)",
+            "scope": "Scope? (Proof of concept, vertical slice, full game)",
+            "setting": "Setting or world? (e.g. medieval, sci-fi, modern)",
+            "art_style": "Art style? (Realistic, stylized, pixel, low-poly)",
+            "players": "Single-player, multiplayer, or both?",
+            "monetization": "Monetization? (None / free, premium, freemium)",
+        },
+        "foundation_hints": {
+            "fighting": ["Character controller", "Combat system", "Arena environment", "Basic AI"],
+            "platformer": ["Character controller", "Level geometry", "Collectibles", "Camera"],
+            "puzzle": ["Puzzle framework", "Level progression", "UI feedback", "Save state"],
+            "rpg": ["Character stats", "Inventory", "Dialogue", "Combat loop"],
+            "default": ["Core loop", "Player controls", "First playable scene", "Basic UI"],
+        },
+    },
+    "app": {
+        "required": ["name", "platform", "purpose"],
+        "optional": ["stack", "auth", "data", "scope", "audience"],
+        "questions": {
+            "name": "What should we call this app?",
+            "platform": "Target platform? (Web, iOS, Android, desktop, cross-platform)",
+            "purpose": "What problem does it solve in one sentence?",
+            "stack": "Preferred stack? (React, Flutter, native, etc.)",
+            "auth": "Does it need accounts / auth?",
+            "data": "Where does data live? (local, cloud DB, third-party API)",
+            "scope": "Scope? (MVP, production, prototype)",
+            "audience": "Who is the primary user?",
+        },
+        "foundation_hints": {
+            "default": ["Auth shell", "Core data model", "Primary screen flow", "Settings"],
+        },
+    },
+    "website": {
+        "required": ["name", "purpose", "pages"],
+        "optional": ["stack", "hosting", "seo", "forms", "brand"],
+        "questions": {
+            "name": "Site or brand name?",
+            "purpose": "What is the site for? (portfolio, landing, blog, store)",
+            "pages": "Which pages are must-haves?",
+            "stack": "Stack preference? (static, Next.js, WordPress, etc.)",
+            "hosting": "Hosting target? (Netlify, Vercel, custom)",
+            "seo": "Any SEO / marketing goals?",
+            "forms": "Contact or signup forms needed?",
+            "brand": "Tone / brand notes?",
+        },
+        "foundation_hints": {
+            "default": ["Layout shell", "Home page", "Navigation", "Deploy pipeline"],
+        },
+    },
+    "utility": {
+        "required": ["name", "purpose", "runtime"],
+        "optional": ["inputs", "outputs", "scope", "language"],
+        "questions": {
+            "name": "What should we call this utility?",
+            "purpose": "What does it do in one sentence?",
+            "runtime": "How does it run? (CLI, script, service, library)",
+            "inputs": "What are the inputs?",
+            "outputs": "What does it produce?",
+            "scope": "Scope? (one-shot script, reusable tool)",
+            "language": "Preferred language?",
+        },
+        "foundation_hints": {
+            "default": ["CLI entrypoint", "Core transform", "Config / flags", "Error handling"],
+        },
+    },
+}
+
+BLUEPRINT_SPECIALIST_PROMPT = """You are a blueprint specialist for the Arsenal Hub. Your job is to help users define projects through conversation.
+
+RULES:
+1. Extract facts from EVERY user message. Never ask about something they already told you.
+2. Use the template's required fields as your checklist. Your goal is to fill all of them.
+3. Ask ONE question at a time. Focus on the most important unfilled gap.
+4. When all required fields are known AND you have enough optional context, present the blueprint.
+5. Keep responses brief. Questions only. No filler. When presenting a complete blueprint, set complete=true and fill the blueprint object.
+6. Prefer concrete values. Infer sensible names from the concept when the user did not give an explicit title.
+7. foundation should be a short list of build pillars for the first dispatchable slice.
+
+TEMPLATE: {template_name}
+Required fields: {required_fields}
+Optional fields: {optional_fields}
+Question tree (for gaps only): {questions}
+Known facts so far: {extracted_facts}
+
+Current conversation:
+{conversation_history}
+
+Latest user message: {user_message}
+
+Respond with ONLY valid JSON (no markdown fences):
+{{
+  "reply": "<your next question, or a short blueprint presentation message>",
+  "extracted": {{<merged facts including prior known facts + new ones from this message>}},
+  "blueprint": null or {{
+    "name": "<project name>",
+    "type": "{template_name}",
+    "genre": "...",
+    "engine": "...",
+    "platform": "...",
+    "scope": "...",
+    "setting": "...",
+    "art_style": "...",
+    "players": "...",
+    "purpose": "...",
+    "foundation": ["..."],
+    "summary": "<1-2 sentence summary>"
+  }},
+  "complete": true or false
+}}
+Only include blueprint fields that apply to this template. Always include name, type, foundation, and summary when complete.
+"""
+
+
+def _blueprint_slug(name):
+    slug = re.sub(r'[^a-z0-9]+', '-', (name or 'untitled').lower()).strip('-')
+    return slug[:60] or 'untitled'
+
+
+def _mailbox_specs_dir():
+    candidates = [
+        os.path.join('/mnt/c/Core-User/mailbox/specs'),
+        os.path.join(r'C:\Core-User\mailbox\specs'),
+        os.path.join(os.path.expanduser('~'), 'mailbox', 'specs'),
+    ]
+    for p in candidates:
+        parent = os.path.dirname(p)
+        if os.path.isdir(parent) or os.path.isdir(os.path.dirname(parent)):
+            return p
+    return candidates[0]
+
+
+def _ensure_blueprint_dirs():
+    os.makedirs(BLUEPRINTS_COMPLETED_DIR, exist_ok=True)
+
+
+def _list_completed_blueprints():
+    _ensure_blueprint_dirs()
+    items = []
+    try:
+        for fname in sorted(os.listdir(BLUEPRINTS_COMPLETED_DIR), reverse=True):
+            if not fname.endswith('.json'):
+                continue
+            fpath = os.path.join(BLUEPRINTS_COMPLETED_DIR, fname)
+            try:
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    bp = json.load(f)
+                bp['filename'] = fname
+                items.append(bp)
+            except (json.JSONDecodeError, OSError):
+                continue
+    except FileNotFoundError:
+        pass
+    return items
+
+
+def _save_completed_blueprint(blueprint):
+    """Persist a completed blueprint JSON under blueprints/completed/."""
+    _ensure_blueprint_dirs()
+    name = (
+        blueprint.get('blueprint_name')
+        or blueprint.get('name')
+        or blueprint.get('concept_name')
+        or 'Untitled'
+    )
+    bp_id = blueprint.get('blueprint_id') or _blueprint_slug(name)
+    blueprint = dict(blueprint)
+    blueprint['blueprint_id'] = bp_id
+    blueprint['blueprint_name'] = name
+    if 'name' not in blueprint:
+        blueprint['name'] = name
+    blueprint.setdefault('status', 'completed')
+    blueprint['updated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    if 'created_at' not in blueprint:
+        blueprint['created_at'] = blueprint['updated_at']
+
+    fname = f'{bp_id}.json'
+    fpath = os.path.join(BLUEPRINTS_COMPLETED_DIR, fname)
+    with open(fpath, 'w', encoding='utf-8') as f:
+        json.dump(blueprint, f, indent=2)
+    return fpath, blueprint
+
+
+def _heuristic_extract(template_id, text, existing=None):
+    """Rule-based fact extraction for offline / Gemini-failure fallback."""
+    extracted = dict(existing or {})
+    if not text:
+        return extracted
+    lower = text.lower()
+    tpl = BLUEPRINT_TEMPLATES.get(template_id) or BLUEPRINT_TEMPLATES['game']
+
+    # Explicit name: "call it X" / "named X" / "called X" — always wins over guesses
+    m = re.search(
+        r"(?:call(?:ed)?\s+it|named|title[:\s]+)\s*[\"']?([A-Za-z0-9][\w' .-]{0,40})",
+        text,
+        re.I,
+    )
+    if m:
+        extracted['name'] = m.group(1).strip().strip('"\'.,')
+
+    if template_id == 'game':
+        engines = {
+            'unreal': 'Unreal', 'ue5': 'Unreal', 'ue4': 'Unreal',
+            'godot': 'Godot', 'unity': 'Unity', 'cryengine': 'CryEngine',
+            'gamemaker': 'GameMaker', 'construct': 'Construct',
+        }
+        for k, v in engines.items():
+            if k in lower and not extracted.get('engine'):
+                extracted['engine'] = v
+                break
+
+        # Multi-word genres first so "puzzle platformer" doesn't collapse to Platformer only
+        genre_phrases = [
+            ('puzzle platformer', 'Puzzle Platformer'),
+            ('action adventure', 'Action Adventure'),
+            ('arena fighter', 'Fighting'),
+            ('fighting', 'Fighting'),
+            ('fighter', 'Fighting'),
+            ('platformer', 'Platformer'),
+            ('puzzle', 'Puzzle'),
+            ('rpg', 'RPG'),
+            ('role-playing', 'RPG'),
+            ('racing', 'Racing'),
+            ('strategy', 'Strategy'),
+            ('shooter', 'Shooter'),
+            ('roguelike', 'Roguelike'),
+            ('metroidvania', 'Metroidvania'),
+            ('survival', 'Survival'),
+            ('adventure', 'Adventure'),
+            ('simulation', 'Simulation'),
+            ('sim', 'Simulation'),
+        ]
+        if not extracted.get('genre'):
+            for k, v in genre_phrases:
+                if k in lower:
+                    extracted['genre'] = v
+                    break
+
+        platforms = {
+            'pc only': 'PC', 'pc': 'PC', 'desktop': 'PC',
+            'console': 'Console', 'playstation': 'Console', 'xbox': 'Console', 'switch': 'Console',
+            'mobile': 'Mobile', 'ios': 'Mobile', 'android': 'Mobile',
+            'web': 'Web', 'browser': 'Web',
+        }
+        for k, v in platforms.items():
+            if k in lower and not extracted.get('platform'):
+                extracted['platform'] = v
+                break
+
+        if any(p in lower for p in ('single-player', 'single player', 'singleplayer', 'solo')):
+            extracted['players'] = 'Single-player'
+        elif any(p in lower for p in ('multiplayer', 'multi-player', 'multi player', 'co-op', 'coop')):
+            if 'single' in lower:
+                extracted['players'] = 'Both'
+            else:
+                extracted['players'] = 'Multiplayer'
+        elif 'both' in lower and 'player' in lower:
+            extracted['players'] = 'Both'
+
+        if any(s in lower for s in ('proof of concept', 'poc', 'prototype', 'small scope')):
+            extracted['scope'] = 'Proof of concept'
+        elif 'vertical slice' in lower:
+            extracted['scope'] = 'Vertical slice'
+        elif any(s in lower for s in ('full game', 'full scope', 'complete game')):
+            extracted['scope'] = 'Full game'
+        elif 'arena fighter' in lower or 'small arena' in lower:
+            extracted.setdefault('scope', 'Proof of concept')
+            if extracted.get('players') and 'arena' not in extracted['players'].lower():
+                extracted['players'] = extracted['players'] + ' · Arena fighter'
+            elif not extracted.get('players'):
+                extracted['players'] = 'Arena fighter'
+
+        styles = {
+            'realistic': 'Realistic', 'gritty': 'Realistic',
+            'stylized': 'Stylized', 'pixel': 'Pixel', 'pixel art': 'Pixel',
+            'low-poly': 'Low-poly', 'low poly': 'Low-poly', 'cartoon': 'Stylized',
+        }
+        for k, v in styles.items():
+            if k in lower and not extracted.get('art_style'):
+                extracted['art_style'] = v
+                break
+
+        settings = []
+        for token in ('medieval', 'fantasy', 'sci-fi', 'scifi', 'cyberpunk', 'modern',
+                      'post-apocalyptic', 'horror', 'space', 'western', 'steampunk'):
+            if token in lower:
+                settings.append(token.replace('scifi', 'sci-fi'))
+        mood = []
+        for token in ('gritty', 'realistic', 'dark', 'whimsical', 'colorful'):
+            if token in lower:
+                mood.append(token)
+        if settings or mood:
+            parts = []
+            if settings:
+                parts.append(', '.join(s.title() if s != 'sci-fi' else 'Sci-fi' for s in settings))
+            if mood:
+                parts.append(', '.join(mood))
+            new_setting = ', '.join(parts)
+            # Prefer the richer description; never shrink an existing setting on a later turn
+            prev = extracted.get('setting') or ''
+            if not prev or len(new_setting) >= len(prev):
+                extracted['setting'] = new_setting
+
+        # Infer name from concept if still missing and we have genre-ish content
+        if not extracted.get('name') and len(text.split()) >= 4:
+            # light title case from distinctive nouns
+            if 'fox' in lower and 'puzzle' in lower:
+                extracted['name'] = 'Fox Puzzle Platformer'
+            elif 'knight' in lower:
+                extracted['name'] = "Knight's Arena"
+            elif 'insect' in lower and 'fight' in lower:
+                extracted['name'] = 'Insect Fighter'
+
+    elif template_id == 'app':
+        for k, v in {
+            'ios': 'iOS', 'android': 'Android', 'web app': 'Web', 'web': 'Web',
+            'desktop': 'Desktop', 'cross-platform': 'Cross-platform', 'mobile': 'Mobile',
+        }.items():
+            if k in lower and not extracted.get('platform'):
+                extracted['platform'] = v
+                break
+        for k, v in {
+            'react native': 'React Native', 'react': 'React', 'flutter': 'Flutter',
+            'swift': 'Swift', 'kotlin': 'Kotlin', 'electron': 'Electron',
+        }.items():
+            if k in lower and not extracted.get('stack'):
+                extracted['stack'] = v
+                break
+        if any(s in lower for s in ('mvp', 'prototype', 'poc')):
+            extracted['scope'] = 'MVP'
+        if not extracted.get('purpose') and len(text.strip()) > 12:
+            # First sentence-ish as purpose
+            purpose = re.split(r'[.!?\n]', text.strip())[0].strip()
+            if len(purpose) > 8:
+                extracted['purpose'] = purpose[:200]
+
+    elif template_id == 'website':
+        for k, v in {
+            'portfolio': 'Portfolio', 'landing': 'Landing page', 'blog': 'Blog',
+            'store': 'Store', 'docs': 'Documentation', 'marketing': 'Marketing site',
+        }.items():
+            if k in lower and not extracted.get('purpose'):
+                extracted['purpose'] = v
+                break
+        if not extracted.get('purpose') and len(text.strip()) > 12:
+            extracted['purpose'] = re.split(r'[.!?\n]', text.strip())[0].strip()[:200]
+        page_m = re.search(r'pages?(?:\s*(?:are|include|:))?\s+([^.]+)', text, re.I)
+        if page_m and not extracted.get('pages'):
+            extracted['pages'] = page_m.group(1).strip()[:200]
+        for k, v in {
+            'next.js': 'Next.js', 'nextjs': 'Next.js', 'hugo': 'Hugo',
+            'wordpress': 'WordPress', 'static': 'Static HTML', 'astro': 'Astro',
+        }.items():
+            if k in lower and not extracted.get('stack'):
+                extracted['stack'] = v
+                break
+
+    elif template_id == 'utility':
+        for k, v in {
+            'cli': 'CLI', 'command line': 'CLI', 'script': 'Script',
+            'service': 'Service', 'library': 'Library', 'api': 'Service',
+        }.items():
+            if k in lower and not extracted.get('runtime'):
+                extracted['runtime'] = v
+                break
+        for k, v in {
+            'python': 'Python', 'javascript': 'JavaScript', 'typescript': 'TypeScript',
+            'go': 'Go', 'rust': 'Rust', 'bash': 'Bash', 'powershell': 'PowerShell',
+        }.items():
+            if re.search(r'\b' + re.escape(k) + r'\b', lower) and not extracted.get('language'):
+                extracted['language'] = v
+                break
+        if not extracted.get('purpose') and len(text.strip()) > 12:
+            extracted['purpose'] = re.split(r'[.!?\n]', text.strip())[0].strip()[:200]
+
+    # Generic name fallback for non-game
+    if not extracted.get('name') and template_id != 'game':
+        if 'called' in lower or 'named' in lower:
+            pass  # already handled
+        words = re.findall(r'[A-Za-z][A-Za-z0-9]+', text)
+        if words and len(words) <= 6:
+            extracted.setdefault('name', ' '.join(words[:4]).title())
+
+    # Drop empty strings
+    return {k: v for k, v in extracted.items() if v not in (None, '')}
+
+
+def _missing_required(template_id, extracted):
+    tpl = BLUEPRINT_TEMPLATES.get(template_id) or BLUEPRINT_TEMPLATES['game']
+    return [f for f in tpl['required'] if not extracted.get(f)]
+
+
+def _next_gap_question(template_id, extracted):
+    tpl = BLUEPRINT_TEMPLATES.get(template_id) or BLUEPRINT_TEMPLATES['game']
+    questions = tpl.get('questions', {})
+    for field in tpl['required']:
+        if not extracted.get(field):
+            return questions.get(field, f'What is the {field}?')
+    # Prefer a couple of high-value optionals before completing
+    priority_optional = {
+        'game': ['scope', 'players', 'art_style'],
+        'app': ['scope', 'stack'],
+        'website': ['stack', 'pages'],
+        'utility': ['language', 'inputs'],
+    }.get(template_id, [])
+    filled_optional = sum(1 for f in tpl.get('optional', []) if extracted.get(f))
+    if filled_optional < 1:
+        for field in priority_optional:
+            if field in tpl.get('optional', []) and not extracted.get(field):
+                return questions.get(field, f'What about {field}?')
+    return None
+
+
+def _foundation_for(template_id, extracted):
+    tpl = BLUEPRINT_TEMPLATES.get(template_id) or BLUEPRINT_TEMPLATES['game']
+    hints = tpl.get('foundation_hints', {})
+    if template_id == 'game':
+        genre = (extracted.get('genre') or '').lower()
+        for key, items in hints.items():
+            if key != 'default' and key in genre:
+                return list(items)
+    return list(hints.get('default', ['Core functionality', 'First vertical slice']))
+
+
+def _build_blueprint_from_extracted(template_id, extracted):
+    name = extracted.get('name') or 'Untitled Project'
+    foundation = _foundation_for(template_id, extracted)
+    bp = {
+        'name': name,
+        'type': template_id,
+        'template': template_id,
+        'foundation': foundation,
+        'summary': '',
+        'extracted': dict(extracted),
+    }
+    # Copy known fields
+    for key, val in extracted.items():
+        if key not in bp and val:
+            bp[key] = val
+
+    # Summary line
+    bits = [name, f'Type: {template_id.title()}']
+    if extracted.get('genre'):
+        bits.append(f"Genre: {extracted['genre']}")
+    if extracted.get('engine'):
+        bits.append(f"Engine: {extracted['engine']}")
+    if extracted.get('platform'):
+        bits.append(f"Platform: {extracted['platform']}")
+    if extracted.get('purpose'):
+        bits.append(extracted['purpose'])
+    bp['summary'] = ' · '.join(bits[:5])
+
+    # Shape for spec-generate.py compatibility
+    bp['blueprint_name'] = name
+    bp['blueprint_id'] = _blueprint_slug(name)
+    bp['core_payload'] = {
+        'has_primary_driver': True,
+        'primary_driver_details': {
+            'components': foundation,
+            'allocation': {
+                k: extracted[k]
+                for k in ('engine', 'platform', 'stack', 'runtime', 'language')
+                if extracted.get(k)
+            },
+        },
+    }
+    bp['foundation_meta'] = {
+        'requires_infrastructure': True,
+        'infrastructure_type': extracted.get('engine') or extracted.get('stack') or extracted.get('runtime') or template_id,
+        'scale_or_quantity': extracted.get('scope') or 'TBD',
+        'items': foundation,
+    }
+    # Keep list form for UI; also store under enhancements if needed
+    bp['enhancements'] = {'feature_list': foundation}
+    bp['status'] = 'draft'
+    bp['source'] = 'blueprint-chat'
+    return bp
+
+
+def _format_conversation(messages):
+    lines = []
+    for m in messages or []:
+        role = (m.get('role') or 'user').upper()
+        content = (m.get('content') or '').strip()
+        if content:
+            lines.append(f'{role}: {content}')
+    return '\n'.join(lines) if lines else '(empty)'
+
+
+def _strip_json_fences(raw_text):
+    text = (raw_text or '').strip()
+    if text.startswith('```'):
+        text = re.sub(r'^```[\w]*\n?', '', text)
+        text = re.sub(r'\n?```$', '', text).strip()
+    return text
+
+
+def _call_gemini_json(prompt, temperature=0.2, max_tokens=1024):
+    """Call Gemini-lite and parse JSON from the response text."""
+    import urllib.request as _ur
+
+    api_key = os.environ.get(GEMINI_KEY_ENV, '') or os.environ.get(GEMINI_KEY_ENV_FALLBACK, '')
+    if not api_key:
+        raise RuntimeError('No GEMINI_API_KEY or GOOGLE_API_KEY found in environment')
+
+    payload = json.dumps({
+        'contents': [{'role': 'user', 'parts': [{'text': prompt}]}],
+        'generationConfig': {'temperature': temperature, 'maxOutputTokens': max_tokens},
+    }).encode('utf-8')
+
+    url = f'{GEMINI_EXTRACT_URL}?key={api_key}'
+    req = _ur.Request(url, data=payload)
+    req.add_header('Content-Type', 'application/json')
+
+    with _ur.urlopen(req, timeout=45) as resp:
+        result = json.loads(resp.read())
+
+    parts = result.get('candidates', [{}])[0].get('content', {}).get('parts', [])
+    raw_text = ''.join(p.get('text', '') for p in parts).strip()
+    raw_text = _strip_json_fences(raw_text)
+    return json.loads(raw_text)
+
+
+def _blueprint_chat_fallback(template_id, messages, user_message, prior_extracted):
+    """Offline specialist: extract facts, ask one gap question, or complete."""
+    # Fold entire conversation into extraction
+    extracted = dict(prior_extracted or {})
+    for m in messages or []:
+        if (m.get('role') or '') == 'user':
+            extracted = _heuristic_extract(template_id, m.get('content') or '', extracted)
+    extracted = _heuristic_extract(template_id, user_message or '', extracted)
+
+    missing = _missing_required(template_id, extracted)
+    gap_q = _next_gap_question(template_id, extracted)
+
+    if missing or gap_q:
+        # Opening message when conversation is empty
+        if not (user_message or '').strip() and not any(
+            (m.get('role') == 'user' and (m.get('content') or '').strip()) for m in (messages or [])
+        ):
+            reply = 'What are you building?'
+        elif gap_q:
+            known_bits = []
+            for k in ('name', 'genre', 'engine', 'platform', 'purpose', 'runtime'):
+                if extracted.get(k):
+                    known_bits.append(f"{k.replace('_', ' ')}: {extracted[k]}")
+            if known_bits:
+                reply = 'Got it. ' + gap_q
+            else:
+                reply = gap_q
+        else:
+            reply = f"What's the {missing[0].replace('_', ' ')}?"
+        return {
+            'reply': reply,
+            'extracted': extracted,
+            'blueprint': None,
+            'complete': False,
+            'source': 'heuristic',
+        }
+
+    blueprint = _build_blueprint_from_extracted(template_id, extracted)
+    return {
+        'reply': "Here's your blueprint. Review and confirm, or tell me what to change.",
+        'extracted': extracted,
+        'blueprint': blueprint,
+        'complete': True,
+        'source': 'heuristic',
+    }
+
+
+def _blueprint_chat_turn(body):
+    """Run one specialist turn. Returns response dict."""
+    template_id = (body.get('template') or 'game').strip().lower()
+    if template_id not in BLUEPRINT_TEMPLATES:
+        template_id = 'game'
+    tpl = BLUEPRINT_TEMPLATES[template_id]
+
+    messages = body.get('messages') or []
+    user_message = body.get('message') or body.get('user_message') or ''
+    if not user_message and messages:
+        # Allow last user message inside messages only
+        for m in reversed(messages):
+            if m.get('role') == 'user':
+                user_message = m.get('content') or ''
+                break
+    prior_extracted = body.get('extracted') or {}
+    if not isinstance(prior_extracted, dict):
+        prior_extracted = {}
+
+    # Seed with heuristic merge so Gemini never re-asks known facts even if it misses them
+    seeded = dict(prior_extracted)
+    for m in messages:
+        if m.get('role') == 'user':
+            seeded = _heuristic_extract(template_id, m.get('content') or '', seeded)
+    seeded = _heuristic_extract(template_id, user_message, seeded)
+
+    prompt = BLUEPRINT_SPECIALIST_PROMPT.format(
+        template_name=template_id,
+        required_fields=', '.join(tpl['required']),
+        optional_fields=', '.join(tpl.get('optional', [])),
+        questions=json.dumps(tpl.get('questions', {}), indent=2),
+        extracted_facts=json.dumps(seeded, indent=2),
+        conversation_history=_format_conversation(messages),
+        user_message=user_message or '(none — open the conversation)',
+    )
+
+    result = None
+    try:
+        result = _call_gemini_json(prompt, temperature=0.25, max_tokens=1200)
+    except Exception as e:
+        print(f'[blueprint-chat] Gemini unavailable, using heuristic: {e}')
+        result = _blueprint_chat_fallback(template_id, messages, user_message, seeded)
+
+    if not isinstance(result, dict):
+        result = _blueprint_chat_fallback(template_id, messages, user_message, seeded)
+
+    # Merge extracted facts (heuristic seed + model)
+    model_extracted = result.get('extracted') if isinstance(result.get('extracted'), dict) else {}
+    merged = dict(seeded)
+    merged.update({k: v for k, v in model_extracted.items() if v not in (None, '')})
+    # Re-apply heuristic on latest message so keywords always win for engine/genre/etc.
+    merged = _heuristic_extract(template_id, user_message, merged)
+
+    complete = bool(result.get('complete'))
+    blueprint = result.get('blueprint')
+    missing = _missing_required(template_id, merged)
+
+    # Force incomplete if required fields still missing
+    if missing:
+        complete = False
+        blueprint = None
+        gap_q = _next_gap_question(template_id, merged)
+        reply = (result.get('reply') or '').strip()
+        # If model tried to complete early or gave empty reply, use gap question
+        if not reply or result.get('complete'):
+            reply = gap_q or f"What's the {missing[0].replace('_', ' ')}?"
+        # If model asked about something already known, override
+        reply_l = reply.lower()
+        asked_known = False
+        for field, val in merged.items():
+            q = (tpl.get('questions') or {}).get(field, '').lower()
+            # crude: if question text mentions engine and we have engine
+            if field in ('engine', 'genre', 'platform') and val:
+                if field in reply_l and str(val).lower() in reply_l:
+                    continue
+                if field in reply_l and 'what' in reply_l:
+                    asked_known = True
+                    break
+        if asked_known:
+            reply = gap_q or reply
+    else:
+        # All required filled — complete if model says so OR optional gap is None
+        gap_q = _next_gap_question(template_id, merged)
+        if complete or blueprint or gap_q is None:
+            complete = True
+            if not isinstance(blueprint, dict) or not blueprint.get('name'):
+                blueprint = _build_blueprint_from_extracted(template_id, merged)
+            else:
+                # Ensure foundation + compatibility fields
+                built = _build_blueprint_from_extracted(template_id, merged)
+                for k, v in built.items():
+                    blueprint.setdefault(k, v)
+                blueprint['extracted'] = merged
+                blueprint['name'] = blueprint.get('name') or merged.get('name') or built['name']
+                blueprint['type'] = template_id
+            reply = (result.get('reply') or '').strip() or (
+                "Here's your blueprint. Review and confirm, or tell me what to change."
+            )
+        else:
+            complete = False
+            blueprint = None
+            reply = (result.get('reply') or '').strip() or gap_q
+
+    if complete and isinstance(blueprint, dict):
+        # Auto-save draft completed blueprint
+        try:
+            path, saved = _save_completed_blueprint(blueprint)
+            blueprint = saved
+            print(f'[blueprint-chat] Auto-saved {path}')
+        except Exception as e:
+            print(f'[blueprint-chat] Auto-save failed: {e}')
+
+    return {
+        'reply': reply,
+        'extracted': merged,
+        'blueprint': blueprint if complete else None,
+        'complete': complete,
+        'template': template_id,
+        'source': result.get('source') or 'gemini',
+    }
+
+
+def _dispatch_blueprint(blueprint, target=None, project=None, board='default'):
+    """Save blueprint, write mailbox spec, create kanban task. Returns result dict."""
+    if not isinstance(blueprint, dict):
+        return {'error': 'blueprint object required'}
+
+    path, saved = _save_completed_blueprint(blueprint)
+    name = saved.get('blueprint_name') or saved.get('name') or 'Untitled'
+    bp_id = saved.get('blueprint_id') or _blueprint_slug(name)
+    target = target or 'any'
+    project = project or ''
+
+    # Generate dispatch spec (inline — same shape as spec-generate.py, with simpler fields)
+    specs_dir = _mailbox_specs_dir()
+    os.makedirs(specs_dir, exist_ok=True)
+    timestamp = time.strftime('%Y%m%d-%H%M', time.gmtime())
+    spec_name = f'{timestamp}_{bp_id}-dispatch.md'
+    spec_path = os.path.join(specs_dir, spec_name)
+
+    foundation = saved.get('foundation') or []
+    if isinstance(foundation, dict):
+        foundation_items = foundation.get('items') or []
+    else:
+        foundation_items = list(foundation)
+
+    lines = [
+        f'# Dispatch Spec: {name}',
+        '',
+        f'**Target:** {target}',
+        f'**Project:** {project or "(not set)"}',
+        f'**Blueprint:** `{bp_id}`',
+        f'**Template:** `{saved.get("template") or saved.get("type") or "unknown"}`',
+        '',
+        '---',
+        '',
+        '## What to Build',
+        '',
+        saved.get('summary') or name,
+        '',
+    ]
+    meta_fields = [
+        ('Genre', saved.get('genre')),
+        ('Engine', saved.get('engine')),
+        ('Platform', saved.get('platform')),
+        ('Scope', saved.get('scope')),
+        ('Setting', saved.get('setting')),
+        ('Art style', saved.get('art_style')),
+        ('Players', saved.get('players')),
+        ('Purpose', saved.get('purpose')),
+        ('Stack', saved.get('stack')),
+        ('Runtime', saved.get('runtime')),
+        ('Language', saved.get('language')),
+        ('Pages', saved.get('pages')),
+    ]
+    lines.append('### Details')
+    for label, val in meta_fields:
+        if val:
+            lines.append(f'- **{label}:** {val}')
+    lines.append('')
+    if foundation_items:
+        lines.append('## Foundation')
+        lines.append('')
+        for item in foundation_items:
+            lines.append(f'- {item}')
+        lines.append('')
+
+    core = saved.get('core_payload') or {}
+    if isinstance(core, dict) and core.get('has_primary_driver'):
+        pd = core.get('primary_driver_details') or {}
+        comps = pd.get('components') or []
+        if comps and not foundation_items:
+            lines.append('### Core Components')
+            for c in comps:
+                lines.append(f'- {c}')
+            lines.append('')
+
+    lines.extend([
+        '---',
+        '',
+        '## Delivery Checklist',
+        '',
+        '- [ ] All core components implemented',
+        '- [ ] Foundation matches spec',
+        '- [ ] Project builds and runs without errors',
+        '- [ ] Results written to `mailbox/results/`',
+        '',
+        '---',
+        f"*Generated {time.strftime('%Y-%m-%d %H:%M')} UTC from blueprint chat*",
+        '',
+    ])
+    with open(spec_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
+
+    # Create kanban task
+    task_id = str(uuid.uuid4())[:8]
+    title = f'Blueprint: {name}'
+    body_parts = [saved.get('summary') or '', f'Spec: {spec_path}', f'Blueprint: {path}']
+    task_body = '\n'.join(p for p in body_parts if p)
+    now = int(time.time())
+    try:
+        conn = get_db(board)
+        ensure_schema(conn)
+        conn.execute("""
+            INSERT OR REPLACE INTO tasks (id, title, body, assignee, status, priority, created_by, created_at, tenant, project_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            task_id,
+            title,
+            task_body,
+            '',
+            'triage',
+            0,
+            'blueprint-chat',
+            now,
+            '',
+            project or '',
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f'[blueprint-chat] Kanban task create failed: {e}')
+        task_id = None
+
+    saved['status'] = 'dispatched'
+    saved['dispatched_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    saved['spec_path'] = spec_path
+    saved['task_id'] = task_id
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(saved, f, indent=2)
+    except OSError as e:
+        print(f'[blueprint-chat] Failed to update dispatched blueprint: {e}')
+
+    return {
+        'status': 'ok',
+        'blueprint': saved,
+        'blueprint_path': path,
+        'spec_path': spec_path,
+        'task_id': task_id,
+        'message': 'Blueprint dispatched. Track it on the Kanban tab.',
+    }
+
+
 def _load_clipboard():
     """Load clipboard state from JSON file. Returns default if missing/corrupt.
     Accepts both `panels` (v0.3+) and legacy `subjects` keys.
@@ -877,6 +1722,24 @@ class KanbanHandler(BaseHTTPRequestHandler):
                 print(f'[memory] Error loading context: {e}')
                 return self._send_json({"status": "error", "error": str(e)}, 500)
 
+        if path == '/api/blueprints':
+            return self._send_json({
+                'blueprints': _list_completed_blueprints(),
+                'templates': list(BLUEPRINT_TEMPLATES.keys()),
+            })
+
+        if path == '/api/blueprints/templates':
+            # Lightweight template metadata for the UI
+            out = {}
+            for tid, tpl in BLUEPRINT_TEMPLATES.items():
+                out[tid] = {
+                    'id': tid,
+                    'required': tpl['required'],
+                    'optional': tpl.get('optional', []),
+                    'questions': tpl.get('questions', {}),
+                }
+            return self._send_json({'templates': out})
+
         if path == '/api/tasks':
             board = params.get('board', ['default'])[0]
             conn = get_db(board)
@@ -1293,6 +2156,54 @@ class KanbanHandler(BaseHTTPRequestHandler):
                     return self._send_json(result)
             except Exception as e:
                 return self._send_json({"error": str(e)}, 502)
+
+        # Blueprint specialist chat — extract facts, ask gaps, complete blueprint
+        if path == '/api/blueprints/chat':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+            try:
+                result = _blueprint_chat_turn(body)
+                return self._send_json(result)
+            except Exception as e:
+                print(f'[blueprint-chat] Error: {e}')
+                return self._send_json({'error': str(e)}, 500)
+
+        # Approve & dispatch completed blueprint → mailbox/specs + kanban
+        if path == '/api/blueprints/dispatch':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+            blueprint = body.get('blueprint')
+            if not blueprint:
+                return self._send_json({'error': 'blueprint is required'}, 400)
+            try:
+                result = _dispatch_blueprint(
+                    blueprint,
+                    target=body.get('target'),
+                    project=body.get('project'),
+                    board=body.get('board') or 'default',
+                )
+                if result.get('error'):
+                    return self._send_json(result, 400)
+                return self._send_json(result)
+            except Exception as e:
+                print(f'[blueprint-chat] Dispatch error: {e}')
+                return self._send_json({'error': str(e)}, 500)
+
+        # Save / update a blueprint JSON (manual edit from review card)
+        if path == '/api/blueprints':
+            content_len = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(content_len)) if content_len > 0 else {}
+            blueprint = body.get('blueprint') or body
+            if not isinstance(blueprint, dict):
+                return self._send_json({'error': 'blueprint object required'}, 400)
+            name = (blueprint.get('name') or blueprint.get('blueprint_name') or '').strip()
+            if not name:
+                return self._send_json({'error': 'Blueprint requires a name'}, 400)
+            try:
+                path_saved, saved = _save_completed_blueprint(blueprint)
+                return self._send_json({'saved': os.path.basename(path_saved), 'blueprint': saved, 'path': path_saved}, 201)
+            except Exception as e:
+                return self._send_json({'error': str(e)}, 500)
 
         # --- Tool Card Specialist Ingest (v2 auto-discovered fields) ---
         if path == '/api/tools/ingest':

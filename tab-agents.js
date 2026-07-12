@@ -106,6 +106,21 @@
   // === BLUEPRINTS AGENT ===
   function refreshBlueprints() {
     try {
+      // Prefer live specialist-chat state when available
+      if (window.BlueprintsTab && typeof BlueprintsTab.getState === 'function') {
+        const s = BlueprintsTab.getState();
+        HubState.blueprints = {
+          mode: 'chat',
+          template: s.template || null,
+          messageCount: (s.messages || []).length,
+          complete: !!s.complete,
+          extractedKeys: Object.keys(s.extracted || {}),
+          blueprintName: s.blueprint?.name || s.blueprint?.blueprint_name || null,
+          status: s.blueprint?.status || (s.complete ? 'ready' : 'in_progress'),
+        };
+        return;
+      }
+
       const tree = document.querySelector('#blueprint-tree');
       const cats = tree?.querySelectorAll('.tree-cat') || [];
       const concepts = tree?.querySelectorAll('.tree-concept') || [];

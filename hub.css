@@ -1033,6 +1033,333 @@ body {
   letter-spacing: 0.1em;
 }
 
+.bp-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Specialist chat layout */
+.bp-chat-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 12px 10px;
+  gap: 8px;
+  overflow: hidden;
+  position: relative;
+}
+
+.bp-chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.bp-template-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bp-template-select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 5px 8px;
+  font-family: inherit;
+}
+
+.bp-extracted-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.bp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--emerald-dim);
+  border: 1px solid rgba(20, 184, 138, 0.2);
+  color: var(--text-secondary);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-chip-key {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--emerald);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bp-chat-area {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--shadow-sm);
+}
+
+.bp-chat-empty {
+  margin: auto;
+  text-align: center;
+  max-width: 320px;
+  padding: 24px 12px;
+}
+
+.bp-chat-empty-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+}
+
+.bp-chat-empty-body {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.bp-msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+}
+
+.bp-msg-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.bp-msg-specialist {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.bp-msg-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+
+.bp-msg-bubble {
+  padding: 8px 12px;
+  border-radius: var(--radius-bubble);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bp-msg-specialist .bp-msg-bubble {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-bottom-left-radius: 4px;
+}
+
+.bp-msg-user .bp-msg-bubble {
+  background: var(--emerald-dim);
+  border: 1px solid rgba(20, 184, 138, 0.25);
+  color: var(--text-primary);
+  border-bottom-right-radius: 4px;
+}
+
+.bp-msg-typing .bp-msg-bubble {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.bp-review-card {
+  flex-shrink: 0;
+  max-height: 42%;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid rgba(20, 184, 138, 0.3);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.bp-review-header {
+  margin-bottom: 10px;
+}
+
+.bp-review-title {
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bp-review-name {
+  flex: 1;
+  min-width: 140px;
+  font-weight: 600;
+}
+
+.bp-review-type {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 4px;
+}
+
+.bp-review-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.bp-review-field label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  display: block;
+  margin-bottom: 3px;
+  text-transform: uppercase;
+}
+
+.bp-review-section {
+  margin-bottom: 10px;
+}
+
+.bp-review-section-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.bp-review-foundation {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.bp-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.bp-review-confirm {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--emerald-dim);
+  border-radius: var(--radius-sm);
+  color: var(--emerald);
+  font-family: var(--font-mono);
+}
+
+.bp-chat-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.bp-chat-input {
+  flex: 1;
+  min-height: 44px;
+  max-height: 120px;
+  resize: vertical;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-family: inherit;
+  line-height: 1.45;
+}
+
+.bp-chat-input:focus {
+  outline: none;
+  border-color: rgba(20, 184, 138, 0.4);
+}
+
+.bp-chat-status {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--emerald);
+  flex-shrink: 0;
+}
+
+.bp-chat-status.error {
+  color: var(--red);
+}
+
+.bp-load-panel {
+  position: absolute;
+  top: 48px;
+  right: 16px;
+  width: min(320px, 90vw);
+  max-height: 50vh;
+  overflow: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 20;
+  padding: 10px;
+}
+
+.bp-load-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+#pane-blueprints {
+  position: relative;
+}
+
 .blueprints-body {
   flex: 1;
   display: flex;
