@@ -80,12 +80,16 @@
 
       const countBadge = tasks.length > 0 ? `<span class="kanban-count">${tasks.length}</span>` : '';
 
+      const cardsHtml = tasks.length > 0
+        ? tasks.map(t => renderCard(t)).join('')
+        : `<div class="kanban-column-empty">—</div>`;
+
       colEl.innerHTML = `
         <div class="kanban-column-header">
           <span>${COLUMN_ICONS[col]} ${COLUMN_LABELS[col]} ${countBadge}</span>
         </div>
         <div class="kanban-column-cards" data-column="${col}">
-          ${tasks.map(t => renderCard(t)).join('')}
+          ${cardsHtml}
         </div>
       `;
 

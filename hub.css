@@ -1948,6 +1948,16 @@ body {
   border-radius: 6px;
 }
 
+.kanban-column-empty {
+  color: var(--text-dim, #555);
+  text-align: center;
+  font-size: 18px;
+  padding: 12px 0;
+  opacity: 0.3;
+  pointer-events: none;
+  user-select: none;
+}
+
 .kanban-card {
   background: var(--bg-surface);
   border: 1px solid var(--bdr);
